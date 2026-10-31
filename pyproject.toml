@@ -1,0 +1,14 @@
+[project]
+name = "edit-twin-asr-benchmark"
+version = "0.1.0"
+description = " Python package requirements for eval project for choosing the best ASR model for Edit Twin MCP."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "jiwer>=4.0.0",
+    "mlx-whisper>=0.4.3",
+    "pandas>=3.1.0",
+    "whisper-normalizer>=0.1.15",
+]
+[tool.pytest.ini_options]
+pythonpath = ["."]
