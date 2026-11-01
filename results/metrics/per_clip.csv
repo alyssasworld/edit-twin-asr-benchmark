@@ -4,6 +4,11 @@ parakeet-tdt,vlog_intro_day_1,32,0.03125,0,0,0
 parakeet-tdt,vlog_intro_day_2,31,0.03225806451612903,1,1,1
 parakeet-tdt,vlog_intro_day_3,643,0.017107309486780714,19,15,16
 parakeet-tdt,vo_popmart_01,117,0.09401709401709402,0,0,0
+qwen3-asr,reel_navier_01,373,0.1126005361930295,0,0,0
+qwen3-asr,vlog_intro_day_1,32,0.03125,0,0,0
+qwen3-asr,vlog_intro_day_2,31,0.03225806451612903,1,0,0
+qwen3-asr,vlog_intro_day_3,643,0.05443234836702955,19,3,3
+qwen3-asr,vo_popmart_01,117,0.13675213675213677,0,0,0
 whisper-turbo,reel_navier_01,373,0.09651474530831099,0,0,0
 whisper-turbo,vlog_intro_day_1,32,0.0,0,0,0
 whisper-turbo,vlog_intro_day_2,31,0.0,1,1,1

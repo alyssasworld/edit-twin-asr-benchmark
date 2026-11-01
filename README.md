@@ -7,8 +7,8 @@ Which speech-to-text model works best for cutting content creator videos? My edi
 | Model | Status |
 |---|---|
 | Whisper large-v3-turbo (baseline, current production) | done |
-| Parakeet TDT 0.6B v3 (NVIDIA) | done: leads (see [Results](#results)) |
-| Qwen3-ASR 1.7B (Alibaba) | to do |
+| Parakeet TDT 0.6B v3 (NVIDIA) | done: **leads** (see [Results](#results)) |
+| Qwen3-ASR 1.7B + Qwen3-ForcedAligner 0.6B (Alibaba) | done: out (drops fillers) |
 
 ## Metrics and decision rule
 Fixed before running anything: see [docs/metrics.md](docs/metrics.md).
@@ -136,6 +136,7 @@ for every model. After changed references or timings, re-running `src.score` is 
 ## How to run
     uv run python -m src.run whisper-turbo   # transcribe all clips -> data/hyps/
     uv run python -m src.run parakeet-tdt    # same for every model in src/models.py
+    uv run python -m src.run qwen3-asr
     uv run python -m src.score               # -> results/metrics/summary.csv, per_clip.csv
     uv run pytest                            # fast checks on small examples
     uv run pytest -m slow                    # also run the real model on one clip
@@ -152,26 +153,39 @@ for every model. After changed references or timings, re-running `src.score` is 
     data/             audio, references and model outputs (private, git-ignored)
 
 ## Results
-Run 2026-11-01 on the Mac below. Full numbers: [results/metrics/](results/metrics/).
+Run 2026-11-02, all three models back to back on the Mac below, plugged in.
+Full numbers: [results/metrics/](results/metrics/).
 
-| | Parakeet TDT 0.6B v3 | Whisper large-v3-turbo |
-|---|---|---|
-| Verbatim WER (lower is better) | **3.8%** | 6.6% |
-| Filler recall (um/uh caught) | **80%** (16 of 20) | 35% (7 of 20) |
-| Filler precision | **94%** | 88% |
-| End timestamp error, median | **100 ms** | 120 ms |
-| Ends within 100 ms | **48%** | 42% |
-| Start timestamp error, median | **100 ms** | 140 ms |
-| Invented words on room tone | **0 / min** | 4.5 / min ("Thank you." ×2) |
-| Formatted WER (case + punctuation) | 14.6% | **13.3%** |
-| Speed (RTFx) | **95×** real time | 26× real time |
-| Load time (first run) | **3.8 s** | 12.2 s |
+| | Parakeet TDT 0.6B v3 | Whisper large-v3-turbo | Qwen3-ASR 1.7B |
+|---|---|---|---|
+| Verbatim WER (lower is better) | **3.8%** | 6.6% | 7.9% |
+| Clean WER (fillers removed) | **3.8%** | 5.9% | **3.8%** |
+| Filler recall (um/uh caught) | **80%** (16 of 20) | 35% (7 of 20) | 15% (3 of 20) |
+| Filler precision | 94% | 88% | **100%** (3 of 3) |
+| End timestamp error, median | 100 ms | 120 ms | **49 ms** |
+| Ends within 100 ms | 48% | 42% | **82%** |
+| Start timestamp error, median | 100 ms | 140 ms | **38 ms** |
+| Invented words on room tone | **0 / min** | 4.5 / min ("Thank you." ×2) | 1.1 / min ("Oh.") * |
+| Formatted WER (case + punctuation) | 14.6% | **13.3%** | 21.8% |
+| Speed (RTFx) | **95×** real time | 27× | 18× |
+| Load time (first run) | **3.7 s** | 11.0 s | 16.6 s |
+| Peak GPU memory | 2.7 GB | **2.6 GB** | 7.5 GB |
 
-**Decision rule:** Parakeet is not worse than Whisper on filler recall or end
-timestamps, and has the lower verbatim WER, so **Parakeet wins** so far. Its one
-weakness is punctuation and capitals, which matters for vlog subtitles.
+\* after adding a loop guard; out of the box Qwen invented 4,637 words per minute on
+room tone. See [Qwen3-ASR: getting stuck on silence](#qwen3-asr-getting-stuck-on-silence).
+
+**Decision rule:** a model must not be worse than Whisper on filler recall or end
+timestamps, then the lowest verbatim WER wins.
+- **Parakeet passes** both checks and has the lowest verbatim WER: **it wins.** Its one
+  weakness is punctuation and capitals, which matters for vlog subtitles.
+- **Qwen is out:** it catches fewer fillers than Whisper (15% vs 35%). It writes clean,
+  accurate transcripts (it ties Parakeet on clean WER) but leaves out um/uh, which
+  edit-twin needs. Its word timings are by far the best of the three, because they
+  come from a separate aligner model.
 
 Caveats:
+- The reference word timings were also made by an aligner, which may favour Qwen's
+  aligner-made timings over the other two.
 - References started from Whisper drafts, which if anything favours Whisper.
 - Parakeet runs in 30 s chunks. That setting was chosen after comparing options on
   these clips: 120 s chunks silently dropped 22 s of speech, and a single pass over the
@@ -179,7 +193,8 @@ Caveats:
   roughly 80–90% (it varied with the chunk setting).
 - Small dataset: 5 clips, ~11 min, one speaker, 20 fillers. Word timings cover 3 clips
   and were made automatically, spot-checked by eye on one plot, not by ear.
-- Speed varies ~10% between runs on the same laptop; treat smaller gaps as a tie.
+- Speed depends on the laptop's state: on battery, every model ran 30–40% slower.
+  Models are always run back to back, plugged in; gaps under ~10% are a tie.
 
 ### Model setup notes
 **Parakeet: how long audio is split matters.** Parakeet's first run used 120 s chunks
@@ -200,6 +215,49 @@ settings on the two long clips (verbatim WER):
 picked by looking at these test clips, it slightly flatters Parakeet; with only 5
 clips there's no separate set to tune on. Lesson: when a model scores badly, check
 how it's being run before blaming the model.
+
+**Qwen3-ASR: getting word timings.** Qwen3-ASR only outputs text. Qwen's recommended
+way to get word times is a second model, Qwen3-ForcedAligner, which places each word
+of the text on the audio. Both run in [mlx-audio](https://github.com/Blaizzy/mlx-audio)
+at full precision (bf16, like the other models), and both count towards Qwen's speed.
+The aligner reads a whole piece in one go and is meant for up to ~5 min, so audio is
+cut into pieces of up to 30 s (at quiet moments) and each piece is aligned with its
+own text. The aligner drops punctuation ("today." → "today"), so its times are paired
+back onto the punctuated words, which formatted WER needs.
+
+#### Qwen3-ASR: getting stuck on silence
+Step by step, from the first run to the fix:
+
+1. **Symptom.** On the 53 s room-tone clip, Qwen wrote 4,096 words (4,637 per minute)
+   and took 161 s, 3× longer than the clip itself.
+2. **What it wrote.** "Oh." once, then "oh, oh, oh, ..." 4,094 times.
+3. **Where.** Split into its two pieces: the first (0–29 s) gave a single "Oh." and
+   stopped normally. The second (29–53 s) started "oh," and never stopped, until it hit
+   the model's limit of 8,192 tokens (word pieces). That piece alone took ~190 s.
+4. **Why.** Qwen3-ASR writes its transcript like a chatbot, one token at a time, each
+   chosen based on what it has written so far. With no speech to anchor it, once it
+   has written "oh," the most likely next token is another "oh,", so it feeds itself.
+   It only stops when it chooses an end token, which it never did. Whisper has
+   built-in safeguards for this (a "no speech" check and a repetition check), and
+   Parakeet can't loop at all (it emits at most a few tokens per slice of audio).
+5. **How big the gap is.** On my speech clips Qwen needed at most 3.9 tokens per second
+   of audio (median 2.1). The loop produced ~340 per second.
+6. **A fix I rejected.** Whisper's own repetition check discards text that compresses
+   more than 2.4×. But my real retakes are repetitive too: "So AI just helped. So AI
+   just helped. So AI just helped." scores 2.78, so that rule would have deleted real
+   speech. (The loop scored 30.)
+7. **The fix.** Each piece gets an allowance of 10 tokens per second of audio (2.5× the
+   most my speech needed). Normal output stops by itself well within it; output that
+   uses up the whole allowance never stopped, so it's a loop and is thrown away. No
+   threshold to tune, and retakes can't trigger it.
+8. **Checked.** Room tone: 4,637 → 1.1 invented words per minute (only the first
+   "Oh." is left; it's a one-off, like Whisper's "Thank you."). Every speech metric
+   came out identical to before the fix, so nothing real was thrown away. Timed side
+   by side, the fix costs no speed (15.3 s vs 15.6 s on `reel_navier_01`).
+
+What this means for edit-twin: any long pause, room tone or music in a video could
+fill with invented words. Any model that writes text this way (an "LLM-style" speech
+model) needs a guard like this before it goes near production.
 
 ## Setup
 - Apple M4 Pro, 24 GB RAM, macOS 15.6.1
