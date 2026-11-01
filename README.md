@@ -21,7 +21,7 @@ Fixed before running anything: see [docs/metrics.md](docs/metrics.md).
 | Reference words | 1,197 |
 | Fillers (um/uh/hmm) | 20 |
 | Speakers | 1 (me) |
-| Word timings | to do (Audacity, 2–3 clips) |
+| Word timings | drafted for 3 vlog clips, checking in Audacity |
 | Silence clips | to do (room tone, music) |
 
 Clips and transcripts are my own unpublished footage and are not included in this
@@ -70,6 +70,21 @@ flowchart LR
 Every model returns the same `[[word, start, end], ...]` format, so adding a model
 only means adding one function to `models.py`.
 
+## Preparing the data
+Done once, before any model is compared. Full steps and commands:
+[docs/labelling-guide.md](docs/labelling-guide.md).
+
+1. **Audio:** cut each clip from raw footage to 16 kHz mono `.wav` in `data/audio/`.
+2. **Reference transcripts:** write what I actually said, word for word, fillers and
+   retakes included, in `data/refs/<clip>.txt`.
+3. **Word timings** (some clips): draft them with `tools/draft_timings.py`, correct
+   them by ear in Audacity, export to `data/refs/<clip>.words.tsv`.
+4. **Silence clips:** record ~60 s of room tone and ~60 s of background music as
+   `data/audio/silence_*.wav` (no reference needed).
+
+Then run every model (below). A new or changed clip in `data/audio/` means re-running
+`src.run`. A changed reference only means re-running `src.score`.
+
 ## How to run
     uv run python -m src.run whisper-turbo   # transcribe all clips -> data/hyps/
     uv run python -m src.score               # -> results/metrics/summary.csv, per_clip.csv
@@ -81,6 +96,7 @@ only means adding one function to `models.py`.
     src/score.py      compute the metrics
     src/models.py     one function per model, all returning [[word, start, end], ...]
     src/run.py        transcribe every clip with one model, timing each run
+    tools/draft_timings.py  draft word timings for checking in Audacity
     tests/            checks on small examples with known answers
     docs/             metrics, decision rule and labelling guide
     data/             audio, references and model outputs (private, git-ignored)
