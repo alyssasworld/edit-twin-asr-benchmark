@@ -60,7 +60,12 @@ Why it matters: against the unfitted drafts Whisper's median end error was 46 ms
 against fitted labels it's 120 ms. Whisper ends words early by about the same amount
 the aligner did, so unfitted labels hid the problem.
 
-**c. Check in Audacity** (`brew install --cask audacity`, tested with Audacity 4.0):
+**c. Check.** What I did: looked at `<clip>.draft.png` (each orange label should sit on
+a burst of sound), then copied the draft to `data/refs/<clip>.words.txt`. That catches
+labels on silence or far too short, but not the wrong word or edges inside fast speech.
+
+Optional, more thorough: listen in Audacity (`brew install --cask audacity`, tested
+with Audacity 4.0):
 1. File → Open `data/audio/<clip>.wav`.
 2. File → Import → Labels… → `data/refs/<clip>.words.draft.txt`. (The label file
    must end in `.txt`, or Audacity won't show it.)
