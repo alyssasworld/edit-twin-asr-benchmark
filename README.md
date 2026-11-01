@@ -28,10 +28,53 @@ Clips and transcripts are my own unpublished footage and are not included in thi
 repo. References were transcribed verbatim by hand, starting from Whisper drafts; see
 [docs/labelling-guide.md](docs/labelling-guide.md).
 
+## How it works
+
+```mermaid
+flowchart LR
+    subgraph inputs["Inputs (private, git-ignored)"]
+        audio["data/audio/clip.wav<br/>raw footage, 16 kHz mono"]
+        refs["data/refs/clip.txt + clip.words.tsv<br/>my hand-checked answers"]
+    end
+
+    subgraph step1["1 · Transcribe"]
+        models["models.py<br/>one function per model"]
+        run["run.py<br/>warm-up + 3 timed runs per clip"]
+    end
+
+    hyps["data/hyps/model-name/clip.json<br/>words + timings, speed, memory"]
+
+    subgraph step2["2 · Score"]
+        textnorm["textnorm.py<br/>verbatim · clean · formatted views"]
+        score["score.py<br/>WER, fillers, timestamps, speed"]
+    end
+
+    results["results/metrics/<br/>summary.csv · per_clip.csv"]
+    edittwin[("edit-twin-mcp<br/>production prompt")]
+
+    edittwin -.-> models
+    audio --> run
+    models --> run
+    run --> hyps
+    hyps --> score
+    refs --> score
+    textnorm --> score
+    score --> results
+```
+
+1. **Transcribe:** `run.py` sends every clip through one model from `models.py` and
+   saves the words, their timings and how long each run took.
+2. **Score:** `score.py` compares each model's words with my references, after
+   `textnorm.py` puts both into the same format, and writes one row per model.
+
+Every model returns the same `[[word, start, end], ...]` format, so adding a model
+only means adding one function to `models.py`.
+
 ## How to run
     uv run python -m src.run whisper-turbo   # transcribe all clips -> data/hyps/
     uv run python -m src.score               # -> results/metrics/summary.csv, per_clip.csv
-    uv run pytest                            # check the scoring code
+    uv run pytest                            # fast checks on small examples
+    uv run pytest -m slow                    # also run the real model on one clip
 
 ## Repo layout
     src/textnorm.py   normalise transcripts (verbatim, clean, formatted views)
