@@ -48,7 +48,44 @@ def whisper_turbo(audio_path: str) -> list[list]:
     return whisper_result_to_words(whisper_result)
 
 
+PARAKEET_REPO = "mlx-community/parakeet-tdt-0.6b-v3"
+_parakeet_model = None  # loaded once on the first call (the warm-up), then reused
+
+
+def parakeet_tokens_to_words(tokens) -> list[list]:
+    """Join Parakeet's sub-word tokens into the shared [[word, start_s, end_s], ...] format.
+
+    Parakeet returns pieces of words, e.g. " fl", "at", "mate": a piece starting with a
+    space begins a new word, any other piece belongs to the word before it.
+    """
+    timed_words = []
+    for token in tokens:
+        if token.text.startswith(" ") or not timed_words:
+            timed_words.append([token.text.strip(), float(token.start), float(token.end)])
+        else:  # continue the current word and stretch its end time
+            timed_words[-1][0] += token.text
+            timed_words[-1][2] = float(token.end)
+    return [w for w in timed_words if w[0]]  # drop empty pieces
+
+
+def parakeet_tdt(audio_path: str) -> list[list]:
+    """NVIDIA Parakeet TDT 0.6B v3 (multilingual), run with MLX on the Mac.
+    No prompt: Parakeet has no prompt option, so this is how it would run in edit-twin."""
+    global _parakeet_model
+    if _parakeet_model is None:
+        from parakeet_mlx import from_pretrained  # imported here, like mlx_whisper above
+        _parakeet_model = from_pretrained(PARAKEET_REPO)
+    # 30 s chunks with 5 s overlap, the same window length Whisper uses. Chosen after
+    # comparing settings on my clips (2026-11-01), so it's tuned on the test set:
+    #   whole file: verbatim WER 12.9% reel / 5.9% vlog_3, 8.4 GB GPU memory
+    #   120 s chunks: dropped 22 s of speech from reel_navier_01 when joining chunks
+    #   30 s chunks: 5.9% reel / 1.7% vlog_3 (best on both)
+    result = _parakeet_model.transcribe(audio_path, chunk_duration=30, overlap_duration=5)
+    return parakeet_tokens_to_words(result.tokens)
+
+
 # model name (used on the command line and as the data/hyps/<name> folder) -> function
 MODELS = {
     "whisper-turbo": whisper_turbo,
+    "parakeet-tdt": parakeet_tdt,
 }

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.models import MODELS, whisper_result_to_words, whisper_turbo
+from src.models import MODELS, parakeet_tokens_to_words, whisper_result_to_words, whisper_turbo
 
 SHORTEST_CLIP = Path("data/audio/vlog_intro_day_1.wav")  # 16 s, quick to transcribe
 
@@ -43,3 +43,12 @@ def test_whisper_turbo_on_a_real_clip():
     for word, start_s, end_s in timed_words:
         assert isinstance(word, str) and word  # a non-empty word
         assert 0 <= start_s <= end_s  # times make sense
+
+
+def test_parakeet_tokens_to_words_joins_word_pieces():
+    from types import SimpleNamespace as Token
+    tokens = [Token(text=" My", start=0.0, end=0.2), Token(text=" fl", start=0.3, end=0.4),
+              Token(text="at", start=0.4, end=0.5), Token(text="mate.", start=0.5, end=0.8),
+              Token(text=" Um", start=1.0, end=1.2)]
+    assert parakeet_tokens_to_words(tokens) == [
+        ["My", 0.0, 0.2], ["flatmate.", 0.3, 0.8], ["Um", 1.0, 1.2]]
