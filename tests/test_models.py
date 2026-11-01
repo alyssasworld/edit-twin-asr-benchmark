@@ -52,3 +52,21 @@ def test_parakeet_tokens_to_words_joins_word_pieces():
               Token(text=" Um", start=1.0, end=1.2)]
     assert parakeet_tokens_to_words(tokens) == [
         ["My", 0.0, 0.2], ["flatmate.", 0.3, 0.8], ["Um", 1.0, 1.2]]
+
+
+def test_attach_times_keeps_punctuation_and_skips_symbols():
+    from types import SimpleNamespace as Item
+    from src.models import attach_times
+    # the aligner returns "today" for "today." and nothing at all for "-"
+    items = [Item(start_time=0.3, end_time=0.7), Item(start_time=0.8, end_time=1.2),
+             Item(start_time=1.5, end_time=1.7)]
+    is_word = lambda piece: any(ch.isalnum() for ch in piece)
+    assert attach_times("So, today. - Um", items, is_word) == [
+        ["So,", 0.3, 0.7], ["today.", 0.8, 1.2], ["Um", 1.5, 1.7]]
+
+
+def test_attach_times_fails_loudly_on_a_mismatch():
+    from types import SimpleNamespace as Item
+    from src.models import attach_times
+    with pytest.raises(ValueError):
+        attach_times("two words", [Item(start_time=0, end_time=1)], lambda p: True)
