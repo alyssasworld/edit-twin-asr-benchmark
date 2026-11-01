@@ -1,0 +1,6 @@
+model,clip,ref_words,wer_verbatim,fillers_ref,fillers_caught,fillers_written
+whisper-turbo,reel_navier_01,373,0.09651474530831099,0,0,0
+whisper-turbo,vlog_intro_day_1,32,0.0,0,0,0
+whisper-turbo,vlog_intro_day_2,31,0.0,1,1,1
+whisper-turbo,vlog_intro_day_3,643,0.04510108864696734,19,6,7
+whisper-turbo,vo_popmart_01,117,0.11965811965811966,0,0,0
