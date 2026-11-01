@@ -1,4 +1,5 @@
 # Edit Twin ASR Benchmark
+(see [Benchmark Dashboard](https://alyssasworld.github.io/edit-twin-asr-benchmark/))
 
 This benchmark repo aims to determine which speech-to-text model works best for cutting and captioning content creator videos. My editing tool (edit-twin-mcp) cuts on word timings and needs fillers (um/uh) transcribed, which public benchmarks don't measure. This benchmark repo tests models on my own footage.
 
