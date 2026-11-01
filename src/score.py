@@ -14,7 +14,7 @@ import pandas as pd  # turn the results into tables and save them as CSV
 
 from src.textnorm import clean_text, filler_words, formatted_text, timed_tokens, verbatim_tokens
 
-REFS = Path("data/refs")  # my hand-corrected transcripts: <clip>.txt and <clip>.words.tsv
+REFS = Path("data/refs")  # my hand-corrected transcripts: <clip>.txt and <clip>.words.txt
 HYPS = Path("data/hyps")  # model outputs written by run.py: <model>/<clip>.json
 RESULTS = Path("results/metrics")  # where summary.csv and per_clip.csv are saved
 
@@ -82,7 +82,7 @@ def load_labels(path: Path):
 
 def share_within(errors: list[float], ms: float):
     """Fraction of errors at or under `ms`, e.g. 0.8 = 80% of words within 50 ms.
-    None when there are no timings (clips without a .words.tsv)."""
+    None when there are no timings (clips without a .words.txt)."""
     return sum(e <= ms for e in errors) / len(errors) if errors else None
 
 
@@ -143,7 +143,7 @@ def score_model(model_dir: Path) -> tuple[dict, list[dict]]:
                          "fillers_caught": fillers_caught, "fillers_written": fillers_in_hyp})
 
         # word timings only exist for the clips I labelled in Audacity
-        labels_file = REFS / f"{clip}.words.tsv"
+        labels_file = REFS / f"{clip}.words.txt"
         if labels_file.exists():
             start_errors, end_errors = timing_errors(load_labels(labels_file),
                                                      timed_tokens(hyp_timed_words))

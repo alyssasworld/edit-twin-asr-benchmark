@@ -10,8 +10,8 @@ Runs in its own throwaway environment so the benchmark's torch version is untouc
     uv run --no-project --with torch==2.8.0 --with torchaudio==2.8.0 \
         --with whisper-normalizer python tools/draft_timings.py vlog_intro_day_1
 
-Writes data/refs/<clip>.words.draft.tsv (Audacity label format: start<TAB>end<TAB>word).
-Rename it to <clip>.words.tsv only after you've checked it, because score.py reads that name.
+Writes data/refs/<clip>.words.draft.txt (Audacity label format: start<TAB>end<TAB>word).
+Rename it to <clip>.words.txt only after you've checked it, because score.py reads that name.
 """
 
 import re
@@ -66,7 +66,7 @@ def main(clip: str):
         end = word_spans[-1].end * seconds_per_frame
         out.append(f"{start:.3f}\t{end:.3f}\t{word}")
 
-    dest = REFS / f"{clip}.words.draft.tsv"
+    dest = REFS / f"{clip}.words.draft.txt"
     dest.write_text("\n".join(out) + "\n")
     print(f"{clip}: {len(out)} words -> {dest}")
 

@@ -6,7 +6,7 @@ Four steps, in order. Everything lands in `data/` (private, git-ignored).
 |---|---|---|
 | 1. Audio | `data/audio/<clip>.wav` | everything |
 | 2. Reference transcript | `data/refs/<clip>.txt` | WER, CER, fillers |
-| 3. Word timings (some clips) | `data/refs/<clip>.words.tsv` | timestamp error |
+| 3. Word timings (some clips) | `data/refs/<clip>.words.txt` | timestamp error |
 | 4. Silence clips | `data/audio/silence_*.wav` | hallucination |
 
 Clip names: `reel_...`, `vlog_...`, `vo_...` (voiceover), `silence_...` (no speech).
@@ -31,7 +31,7 @@ Clip names: `reel_...`, `vlog_...`, `vo_...` (voiceover), `silence_...` (no spee
    (Uncorrected Whisper words would make Whisper look better than it is.)
 
 ## 3. Word timings
-`data/refs/<clip>.words.tsv`: the start and end of every word, for a few clips only
+`data/refs/<clip>.words.txt`: the start and end of every word, for a few clips only
 (currently the three `vlog_intro_day_*` clips, which hold almost all the fillers).
 Labelling from scratch takes hours, so draft them first, then correct by ear.
 
@@ -43,15 +43,31 @@ run downloads a 1.2 GB model.
     uv run --no-project --with torch==2.8.0 --with torchaudio==2.8.0 \
         --with whisper-normalizer python tools/draft_timings.py <clip> [<clip> ...]
 
-This writes `data/refs/<clip>.words.draft.tsv`. The scorer ignores `.draft` files.
+This writes `data/refs/<clip>.words.draft.txt`. The scorer ignores `.draft` files.
 
-**b. Correct in Audacity** (`brew install --cask audacity`):
+**b. Fit to the waveform.** The aligner makes words too short (a word "ends" while I'm
+still saying it). `tools/refine_timings.py` stretches each label's edges until the
+sound falls back to the room's noise level, never overlapping the next word. Edges in
+fast connected speech have no quiet to snap to, so they stay as the aligner put them.
+
+    uv run --with matplotlib python tools/refine_timings.py <clip> [<clip> ...] --plot
+
+This rewrites `<clip>.words.draft.txt`, keeps the untouched aligner output as
+`<clip>.words.aligned.txt`, and saves `<clip>.draft.png` (orange = fitted labels,
+blue = original aligner labels) for a quick look.
+
+Why it matters: against the unfitted drafts Whisper's median end error was 46 ms;
+against fitted labels it's 120 ms. Whisper ends words early by about the same amount
+the aligner did, so unfitted labels hid the problem.
+
+**c. Check in Audacity** (`brew install --cask audacity`, tested with Audacity 4.0):
 1. File → Open `data/audio/<clip>.wav`.
-2. File → Import → Labels… → `data/refs/<clip>.words.draft.tsv`.
-3. Zoom in (⌘1), play each label, drag its edges to cover the word from its first
-   sound to its last. Ends matter most (cuts land there). Watch short words like "i"
-   (drafts can be too short) and um/uh.
-4. File → Export → Export Labels… → `data/refs/<clip>.words.tsv` (no `.draft`).
+2. File → Import → Labels… → `data/refs/<clip>.words.draft.txt`. (The label file
+   must end in `.txt`, or Audacity won't show it.)
+3. Zoom in (⌘1), click a label and press Space to play it. Only drag an edge if the
+   word sounds cut off or includes part of the next word. Ends matter most (cuts land
+   there). Never rename, add or delete labels.
+4. File → Export → Export Labels… → `data/refs/<clip>.words.txt` (no `.draft`).
 
 If I edit a `.txt` reference later, redo the draft and the corrections for that clip,
 so the words in both files still match.
@@ -59,11 +75,18 @@ so the words in both files still match.
 ## 4. Silence clips
 Tests whether a model invents words when nobody is speaking. No reference needed.
 
-- **Room tone:** ~60 s of nothing, same mic and room I film in.
-- **Music:** ~60 s of a background track I use in videos, ideally no vocals.
+- **Room tone** (done): ~60 s of nothing, same mic and room I film in.
+- **Music** (optional, not used yet): ~60 s of a background track, ideally no vocals.
 
-      ffmpeg -i roomtone.m4a -t 60 -ac 1 -ar 16000 data/audio/silence_roomtone.wav
-      ffmpeg -i music.mp3    -t 60 -ac 1 -ar 16000 data/audio/silence_music.wav
+Pressing record and stop makes handling noise at the start and end, which isn't
+room tone. Find it by printing the loudest level of each second (look for numbers far
+above the rest, e.g. -8 when the rest is about -55):
+
+    ffmpeg -nostats -i roomtone.MP4 -vn -ac 1 -af "asetnsamples=48000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.Peak_level" -f null - 2>&1 | grep -o 'Peak_level=.*'
+
+Then keep only the quiet stretch (`-ss` start, `-to` end, in seconds):
+
+    ffmpeg -i roomtone.MP4 -ss 5 -to 58 -vn -ac 1 -ar 16000 data/audio/silence_roomtone.wav
 
 ## After preparing
 New or changed audio → re-run every model (`uv run python -m src.run <model>`), then

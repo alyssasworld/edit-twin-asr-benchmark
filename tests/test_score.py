@@ -67,7 +67,7 @@ def test_share_within():
 
 def test_load_labels(tmp_path):
     # tmp_path is a temporary folder pytest makes for this test
-    labels_file = tmp_path / "clip.words.tsv"
+    labels_file = tmp_path / "clip.words.txt"
     labels_file.write_text("0.0\t0.2\tSo,\n0.3\t0.5\tum\n")
     # words are cleaned the same way as the model's ("So," -> "so")
     assert load_labels(labels_file) == [("so", 0.0, 0.2), ("um", 0.3, 0.5)]
@@ -88,7 +88,7 @@ def fake_data(tmp_path, monkeypatch):
 
     # my transcript and word timings
     (refs_dir / "clip1.txt").write_text("So um I was, uh, thinking.")
-    (refs_dir / "clip1.words.tsv").write_text(
+    (refs_dir / "clip1.words.txt").write_text(
         "0.0\t0.2\tSo\n0.3\t0.5\tum\n0.6\t0.7\tI\n0.7\t0.9\twas\n1.0\t1.2\tuh\n1.3\t1.8\tthinking\n")
     # the model: dropped both fillers and the comma, ended "thinking" 100 ms late
     hyp_timed_words = [["So", 0.0, 0.2], ["I", 0.6, 0.7], ["was", 0.7, 0.9], ["thinking.", 1.3, 1.9]]

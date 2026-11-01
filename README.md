@@ -21,8 +21,8 @@ Fixed before running anything: see [docs/metrics.md](docs/metrics.md).
 | Reference words | 1,197 |
 | Fillers (um/uh/hmm) | 20 |
 | Speakers | 1 (me) |
-| Word timings | drafted for 3 vlog clips, checking in Audacity |
-| Silence clips | to do (room tone, music) |
+| Word timings | 680 words over 3 vlog clips (aligner + waveform fit; `vlog_intro_day_1` checked in Audacity) |
+| Silence clips | 1 (53 s room tone) |
 
 Clips and transcripts are my own unpublished footage and are not included in this
 repo. References were transcribed verbatim by hand, starting from Whisper drafts; see
@@ -34,7 +34,7 @@ repo. References were transcribed verbatim by hand, starting from Whisper drafts
 flowchart LR
     subgraph inputs["Inputs (private, git-ignored)"]
         audio["data/audio/clip.wav<br/>raw footage, 16 kHz mono"]
-        refs["data/refs/clip.txt + clip.words.tsv<br/>my hand-checked answers"]
+        refs["data/refs/clip.txt + clip.words.txt<br/>my hand-checked answers"]
     end
 
     subgraph step1["1 · Transcribe"]
@@ -71,19 +71,44 @@ Every model returns the same `[[word, start, end], ...]` format, so adding a mod
 only means adding one function to `models.py`.
 
 ## Preparing the data
-Done once, before any model is compared. Full steps and commands:
+Done once, before any model is compared. Each step says which tool to use and what it
+produces. Transcript rules and Audacity click-by-click steps:
 [docs/labelling-guide.md](docs/labelling-guide.md).
 
-1. **Audio:** cut each clip from raw footage to 16 kHz mono `.wav` in `data/audio/`.
-2. **Reference transcripts:** write what I actually said, word for word, fillers and
-   retakes included, in `data/refs/<clip>.txt`.
-3. **Word timings** (some clips): draft them with `tools/draft_timings.py`, correct
-   them by ear in Audacity, export to `data/refs/<clip>.words.tsv`.
-4. **Silence clips:** record ~60 s of room tone and ~60 s of background music as
-   `data/audio/silence_*.wav` (no reference needed).
+**1. Audio** (tool: `ffmpeg`). Cut each clip from raw footage into a 16 kHz mono `.wav`:
 
-Then run every model (below). A new or changed clip in `data/audio/` means re-running
-`src.run`. A changed reference only means re-running `src.score`.
+    ffmpeg -i footage.MP4 -ss 00:01:00 -t 120 -vn -ac 1 -ar 16000 data/audio/<clip>.wav
+
+**2. Reference transcript** (tool: a text editor). Since I initially started with MCP creation and tested via editing my own videos, I already had some Whisper transcripts created. So, I started from a Whisper transcript and
+correct every word while listening, keeping fillers and retakes. Then saved as
+`data/refs/<clip>.txt`.
+
+**3. Word timings**, for a few clips only (tools: `tools/draft_timings.py`,
+`tools/refine_timings.py`, then Audacity).
+- a. **Draft:** run the aligner to get a start and end time for every word of the
+  reference. It writes `data/refs/<clip>.words.draft.txt`:
+
+      uv run --no-project --with torch==2.8.0 --with torchaudio==2.8.0 \
+          --with whisper-normalizer python tools/draft_timings.py <clip>
+
+- b. **Fit to the waveform:** the aligner makes words too short, so stretch each label
+  until the sound actually starts and stops. This rewrites the draft (the original is
+  kept as `.words.aligned.txt`) and saves a picture to `data/refs/<clip>.draft.png`:
+
+      uv run --with matplotlib python tools/refine_timings.py <clip> --plot
+
+- c. **Check in Audacity** (`brew install --cask audacity`): open the `.wav`, import the
+  draft as labels, play each label and fix any that sound wrong, then export the labels
+  as `data/refs/<clip>.words.txt` (no `.draft`). Only this checked file is scored.
+
+**4. Silence clip** (tools: a camera or mic, then `ffmpeg`). Record ~60 s of the empty
+room where you film, with the same mic. Convert it, trimming off the seconds where you
+touched the camera:
+
+    ffmpeg -i roomtone.MP4 -ss 5 -to 58 -vn -ac 1 -ar 16000 data/audio/silence_roomtone.wav
+
+**Then run the models** (next section). After new or changed audio, re-run `src.run`
+for every model. After changed references or timings, re-running `src.score` is enough.
 
 ## How to run
     uv run python -m src.run whisper-turbo   # transcribe all clips -> data/hyps/
@@ -96,7 +121,8 @@ Then run every model (below). A new or changed clip in `data/audio/` means re-ru
     src/score.py      compute the metrics
     src/models.py     one function per model, all returning [[word, start, end], ...]
     src/run.py        transcribe every clip with one model, timing each run
-    tools/draft_timings.py  draft word timings for checking in Audacity
+    tools/draft_timings.py   draft word timings with a neutral aligner
+    tools/refine_timings.py  fit those timings to the waveform, before checking in Audacity
     tests/            checks on small examples with known answers
     docs/             metrics, decision rule and labelling guide
     data/             audio, references and model outputs (private, git-ignored)
@@ -110,5 +136,7 @@ TBD
 - Requires [edit-twin-mcp](https://github.com/alyssasworld/edit-twin-mcp) cloned next
   to this repo (`../edit-twin-mcp`): the Whisper baseline uses its production
   verbatim prompt.
+- For preparing data: `ffmpeg` and Audacity (`brew install ffmpeg`,
+  `brew install --cask audacity`)
 
       uv sync
