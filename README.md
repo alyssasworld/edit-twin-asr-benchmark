@@ -1,6 +1,6 @@
-# Creator ASR Benchmark
+# Edit Twin ASR Benchmark
 
-Which speech-to-text model works best for cutting content creator videos? My editing tool (edit-twin-mcp) cuts on word timings and needs fillers (um/uh) transcribed, which public benchmarks don't measure. This benchmark tests models on my own footage.
+This benchmark repo aims to determine which speech-to-text model works best for cutting and captioning content creator videos. My editing tool (edit-twin-mcp) cuts on word timings and needs fillers (um/uh) transcribed, which public benchmarks don't measure. This benchmark repo tests models on my own footage.
 
 ## Models 
 (currently tracking: https://huggingface.co/datasets/hf-audio/open-asr-leaderboard)
@@ -21,7 +21,7 @@ Fixed before running anything: see [docs/metrics.md](docs/metrics.md).
 | Reference words | 1,197 |
 | Fillers (um/uh/hmm) | 20 |
 | Speakers | 1 (me) |
-| Word timings | 680 words over 3 vlog clips (automatic: aligner + waveform fit, spot-checked by eye) |
+| Word timings | 706 words over 3 vlog clips (automatic: aligner + waveform fit, spot-checked by eye) |
 | Silence clips | 1 (53 s room tone) |
 
 Clips and transcripts are my own unpublished footage and are not included in this

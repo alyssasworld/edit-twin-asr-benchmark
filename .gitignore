@@ -3,3 +3,6 @@ __pycache__/
 .DS_Store
 data/
 *.wav
+
+# built from results/metrics by tools/build_dashboard.py (locally, and by the Pages workflow)
+docs/results.json

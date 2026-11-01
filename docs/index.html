@@ -1,0 +1,858 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit Twin ASR benchmark</title>
+<meta name="description" content="Which speech-to-text model edit-twin should use: Whisper, Parakeet and Qwen3-ASR tested on my own footage.">
+<style>
+:root {
+  color-scheme: light;
+  --color-bg: #f9f9f7; --color-panel: #ffffff; --color-fg: #141413; --color-fg-muted: #6b6a65;
+  --color-border-line: rgba(20,20,19,.10); --color-ok: #1f7a3a; --color-warn: #a86400; --color-bad: #c43c3c;
+  --series-1: #2a78d6; --series-2: #e8692f; --series-3: #1baf7a;
+  --cds-chart-muted: #b4b2aa; --cds-chart-grid: #ecebe6; --cds-chart-axis: #c3c2b7; --cds-chart-reference: #8f8d85;
+  --cds-chart-status-critical: #d03b3b;
+  --cds-surface-popover: #ffffff; --cds-border: rgba(20,20,19,.12); --cds-shadow-popover: 0 6px 20px rgba(0,0,0,.12); --cds-text-secondary: #6b6a65;
+  --font-anthropic-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-anthropic-serif: ui-serif, "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --cds-font-size-caption: 13px; --cds-font-size-body: 16px; --cds-font-size-heading: 17px; --cds-font-size-title: 30px; --cds-font-weight-medium: 600;
+  --cds-gap-xs: 6px; --cds-gap-sm: 10px; --cds-gap-md: 16px; --cds-gap-lg: 24px; --cds-gap-xl: 44px;
+  --cds-pad-xs: 6px; --cds-pad-sm: 10px; --cds-pad-md: 16px; --cds-pad-lg: 20px; --cds-radius: 10px;
+  --cds-dur-slow: 480ms; --cds-ease-out: cubic-bezier(.2,.8,.2,1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: #121211; --color-panel: #1b1b1a; --color-fg: #f0efec; --color-fg-muted: #a3a29b;
+    --color-border-line: rgba(255,255,255,.10); --color-ok: #4cc26f; --color-warn: #e0a040; --color-bad: #ee6b6b;
+    --series-1: #4a90e8; --series-2: #f07d45; --series-3: #2fc08b;
+    --cds-chart-muted: #6c6b66; --cds-chart-grid: #2a2a28; --cds-chart-axis: #45443f; --cds-chart-reference: #8a8983;
+    --cds-chart-status-critical: #e66767;
+    --cds-surface-popover: #232322; --cds-border: rgba(255,255,255,.14); --cds-shadow-popover: 0 6px 20px rgba(0,0,0,.4); --cds-text-secondary: #a3a29b;
+  }
+}
+body { margin: 0; background: var(--color-bg); color: var(--color-fg); font-family: var(--font-anthropic-sans); }
+#dash-root { padding: clamp(16px, 4vw, 48px) clamp(16px, 4vw, 40px) 64px; }
+.dash-skeleton { color: transparent; background: var(--cds-chart-grid); border-radius: 4px; }
+.load-error { color: var(--color-bad); font-size: 13px; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+/* Small stand-in for the dashboard runtime: loads results.json and runs the page's calcs and drawings. */
+(() => {
+  const store = {}, calcs = [], draws = {}, onData = [];
+  let status = 'loading';
+  window.dash = {
+    colors: ['var(--series-1)', 'var(--series-2)', 'var(--series-3)'],
+    data: (id) => store[id] ? { status: 'ok', data: store[id] } : { status, data: [] },
+    calc: (id, def) => calcs.push([id, def]),
+    draw: (name, fn) => { draws[name] = fn; },
+    onData: (fn) => onData.push(fn),
+  };
+  function render() {
+    for (const [id, def] of calcs) store[id] = def.fn(...def.inputs.map((i) => store[i] || []));
+    onData.forEach((f) => f());
+    for (const [name, fn] of Object.entries(draws))
+      document.querySelectorAll(`[data-draw="${name}"]`).forEach((el) => { if (!el.closest('[hidden]')) fn(el); });
+  }
+  window.__loadDashboard = (fixed) => {
+    Object.assign(store, fixed);
+    fetch('results.json')
+      .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then((d) => { store.summary = d.summary; store.per_clip = d.per_clip; status = 'ok'; render(); })
+      .catch((e) => { status = 'error'; render(); const m = document.getElementById('load-error'); m.hidden = false; m.textContent = `Couldn't load results.json (${e.message}). Run tools/build_dashboard.py.`; });
+    let t; let w = innerWidth;
+    addEventListener('resize', () => { if (innerWidth === w) return; w = innerWidth; clearTimeout(t); t = setTimeout(render, 120); });
+  };
+})();
+</script>
+<style>
+/* page styles */
+.ev { font-family: var(--font-anthropic-sans); color: var(--color-fg); max-width: 1180px; margin-inline: auto; }
+.ev * { box-sizing: border-box; }
+.ev [hidden] { display: none !important; }
+.ev .num, .ev td, .ev .tile-v, .ev .tile-d { font-variant-numeric: tabular-nums; }
+.ev-eyebrow { margin: 0 0 var(--cds-gap-xs); color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); letter-spacing: .02em; }
+.ev-title { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); line-height: 1.15; margin: 0 0 var(--cds-gap-sm); }
+.ev-top { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--cds-gap-md); flex-wrap: wrap; }
+.ev-repos { display: flex; gap: var(--cds-gap-xs); flex-wrap: wrap; }
+.ev-repos a { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--color-border-line); border-radius: 999px; color: var(--color-fg); text-decoration: none; font-size: var(--cds-font-size-caption); background: var(--color-panel); }
+.ev-repos a:hover { border-color: var(--color-fg-muted); }
+.ev-repos svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
+.ev-exec { margin-top: var(--cds-gap-md); }
+.metric-grid { display: grid; gap: var(--cds-gap-sm); grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
+.mdef p { font-size: var(--cds-font-size-caption); line-height: 1.5; margin: 0 0 6px; color: var(--color-fg-muted); }
+.mdef p b { color: var(--color-fg); font-weight: 600; }
+.mdef h3 { margin-bottom: 6px; }
+.mk { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--color-fg-muted); margin-bottom: 6px; }
+.mk-gate { color: var(--color-ok); font-weight: 600; }
+.delta-legend { margin: 0 0 var(--cds-gap-md); }
+.sw-zero { width: 2px; height: 14px; border-radius: 0; background: var(--cds-chart-axis); }
+.ax-title { fill: var(--color-fg-muted); font-size: 11px; font-weight: 600; }
+.ev-take { font-size: var(--cds-font-size-body); max-width: 62ch; margin: 0; line-height: 1.5; }
+.ev-take b, .ev-steps b, .ev-find b, .ev-foot b { font-weight: 600; }
+.ev-legend { display: flex; flex-wrap: wrap; gap: var(--cds-gap-xs) var(--cds-gap-md); margin: var(--cds-gap-md) 0 0; padding: 0; list-style: none; font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); }
+.ev-legend li { display: flex; align-items: center; gap: 6px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; background: var(--cds-chart-muted); }
+.sw-dash { width: 14px; height: 0; border-top: 2px dashed var(--cds-chart-reference); border-radius: 0; background: none; }
+
+.ev-sec { margin-top: var(--cds-gap-xl); }
+.ev-h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0 0 4px; }
+.ev-note { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); margin: 0 0 var(--cds-gap-md); max-width: 75ch; line-height: 1.5; }
+.card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); min-width: 0; }
+.card h3 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0 0 2px; }
+.card .sub { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); margin: 0 0 var(--cds-gap-md); line-height: 1.45; }
+.grid { display: grid; gap: var(--cds-gap-md); grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); }
+
+/* decision band */
+.band { display: grid; gap: var(--cds-gap-md); grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); margin-top: var(--cds-gap-lg); }
+.verdict { display: flex; flex-direction: column; gap: var(--cds-gap-sm); position: relative; overflow: hidden; }
+.verdict::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--color-ok); }
+.verdict.is-stay::before { background: var(--cds-chart-muted); }
+.v-label { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); text-transform: uppercase; letter-spacing: .08em; margin: 0; }
+.v-name { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: calc(var(--cds-font-size-title) * 1.35); line-height: 1.05; margin: 0; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--cds-font-size-caption); font-weight: 600; padding: 2px 10px; border-radius: 999px; width: fit-content; }
+.chip-ok { color: var(--color-ok); background: color-mix(in srgb, var(--color-ok) 12%, transparent); }
+.chip-bad { color: var(--color-bad); background: color-mix(in srgb, var(--color-bad) 12%, transparent); }
+.chip-mute { color: var(--color-fg-muted); background: color-mix(in srgb, var(--color-fg-muted) 12%, transparent); }
+.v-rule { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); line-height: 1.5; margin: 0; }
+.v-rule strong { color: var(--color-fg); font-weight: 600; }
+.tiles { display: grid; gap: var(--cds-gap-sm); grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.5rem), 1fr)); }
+.tile { padding: var(--cds-pad-md); }
+.tile-l { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); margin: 0 0 6px; line-height: 1.35; }
+.tile-v { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); line-height: 1.1; margin: 0 0 6px; }
+.tile-d { font-size: var(--cds-font-size-caption); color: var(--color-fg-muted); margin: 0; }
+.tile-d .up, .tile-d .down { font-weight: 600; }
+.up { color: var(--color-ok); }
+.down { color: var(--color-bad); }
+
+/* gate table + steps */
+.tbl-wrap { overflow-x: auto; }
+.ev table { border-collapse: collapse; width: 100%; font-size: var(--cds-font-size-caption); }
+.ev th, .ev td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--color-border-line); vertical-align: middle; }
+.ev th { color: var(--color-fg-muted); font-weight: 500; white-space: nowrap; }
+.ev th.r, .ev td.r { text-align: right; }
+.ev tbody tr:last-child td { border-bottom: 0; }
+.mname { display: flex; align-items: center; gap: 8px; font-weight: 600; white-space: nowrap; }
+.mnote { display: block; color: var(--color-fg-muted); font-weight: 400; font-size: 11px; }
+.gate { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.gate i { font-style: normal; font-weight: 700; }
+.gate.ok i { color: var(--color-ok); }
+.gate.bad i { color: var(--color-bad); }
+.gate.base i { color: var(--color-fg-muted); }
+tr.is-win td { background: color-mix(in srgb, var(--color-ok) 6%, transparent); }
+
+.ev-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--cds-gap-sm); counter-reset: s; }
+.ev-steps li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; font-size: var(--cds-font-size-caption); line-height: 1.5; counter-increment: s; }
+.ev-steps li::before { content: counter(s); width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; border: 1px solid var(--color-border-line); color: var(--color-fg-muted); }
+.ev-steps li.ship::before { background: var(--color-ok); border-color: transparent; color: var(--color-panel); }
+.step-t { display: block; font-weight: 600; font-size: var(--cds-font-size-body); color: var(--color-fg); }
+.step-k { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--color-fg-muted); margin-right: 6px; }
+
+/* charts */
+.chart { position: relative; width: 100%; }
+.chart-gate, .chart-speed { min-height: 300px; }
+.chart-delta { min-height: 560px; }
+.chart svg { display: block; overflow: visible; }
+.chart text { font-family: var(--font-anthropic-sans); }
+.tick text, .lbl-muted { fill: var(--color-fg-muted); font-size: 11px; }
+.lbl { fill: var(--color-fg); font-size: 12px; font-weight: 600; }
+.lbl-sub { fill: var(--color-fg-muted); font-size: 11px; }
+.zone-lbl { fill: var(--color-ok); font-size: 11px; font-weight: 600; }
+.grp-lbl { fill: var(--color-fg); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.tip { position: absolute; pointer-events: none; z-index: 5; opacity: 0; transition: opacity .1s; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); min-width: 160px; max-width: 240px; }
+.tip .tt { color: var(--cds-text-secondary); margin-bottom: 2px; }
+.tip .tr { display: flex; align-items: center; gap: 6px; }
+.tip .tr b { margin-left: auto; font-weight: 600; }
+.fail-line { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: inherit; color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); }
+.fail-line::before { content: ""; width: .375rem; height: .375rem; border-radius: 50%; background: var(--color-bad); }
+
+/* heat table */
+.heat td.h { text-align: right; position: relative; }
+.heat td.h .v { font-weight: 500; }
+.heat td.h.best .v { font-weight: 700; }
+.heat td.h .f { display: block; font-size: 11px; color: var(--color-fg-muted); }
+.heat td.h.best .v::after { content: " ●"; font-size: 8px; vertical-align: middle; color: var(--color-ok); }
+
+/* findings */
+.ev-find .tag { display: inline-block; font-size: 11px; color: var(--color-fg-muted); border: 1px solid var(--color-border-line); border-radius: 999px; padding: 1px 8px; margin-bottom: var(--cds-gap-sm); }
+.ev-find p, .ev-find li { font-size: var(--cds-font-size-caption); line-height: 1.55; }
+.ev-find p { margin: 0 0 var(--cds-gap-sm); }
+.ev-find ol { margin: 0; padding-left: 18px; }
+.ev-find li { margin-bottom: 4px; }
+.ev-find img { width: 100%; border-radius: var(--cds-radius); border: 1px solid var(--color-border-line); display: block; margin: var(--cds-gap-xs) 0; background: #fff; }
+.cap { color: var(--color-fg-muted); font-size: 11px; margin: 0; }
+.impact { display: flex; align-items: baseline; gap: 8px; margin: 0 0 var(--cds-gap-sm); padding: var(--cds-pad-sm); border-radius: var(--cds-radius); background: color-mix(in srgb, var(--color-fg) 4%, transparent); font-size: var(--cds-font-size-caption); }
+.impact .big { font-family: var(--font-anthropic-serif); font-size: var(--cds-font-size-heading); }
+.ev-find table td, .ev-find table th { padding: 6px 8px; }
+.ev-find tr.used td { font-weight: 700; }
+
+details.all summary { cursor: pointer; font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); list-style: none; display: flex; align-items: center; gap: 8px; }
+details.all summary::-webkit-details-marker { display: none; }
+details.all summary::before { content: "▸"; color: var(--color-fg-muted); transition: transform .15s; }
+details.all[open] summary::before { transform: rotate(90deg); }
+details.all .tbl-wrap { margin-top: var(--cds-gap-md); }
+.all td b { font-weight: 700; }
+
+.ev-foot { margin-top: var(--cds-gap-xl); padding-top: var(--cds-gap-lg); border-top: 1px solid var(--color-border-line); color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); line-height: 1.6; }
+.ev-setup { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.ev-setup b { color: var(--color-fg); font-weight: 600; }
+.ev-foot .ev-h2 { color: var(--color-fg); margin-bottom: var(--cds-gap-xs); }
+.ev-foot a, .ev-note a { color: inherit; text-underline-offset: 3px; }
+
+[data-dash-source-state=empty] { color: transparent; }
+[data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
+@media (prefers-reduced-motion: no-preference) {
+  .ev .grow { animation: ev-grow var(--cds-dur-slow) var(--cds-ease-out) both; transform-origin: var(--ox, 0) 50%; transform-box: fill-box; }
+  .ev .pop { animation: ev-pop var(--cds-dur-slow) var(--cds-ease-out) both; transform-box: fill-box; transform-origin: center; }
+  @keyframes ev-grow { from { transform: scaleX(0); } }
+  @keyframes ev-pop { from { transform: scale(0); opacity: 0; } }
+}
+</style>
+</head>
+<body>
+<div id="dash-root">
+<p class="load-error" id="load-error" hidden></p>
+
+
+<div class="ev">
+  <header id="top">
+    <div class="ev-top">
+    <div>
+    <p class="ev-eyebrow">Last updated: <span class="dash-skeleton" data-draw="hl" data-source="headline" data-field="last_run" data-row="0" data-fmt="datelong">—</span></p>
+    <h1 class="ev-title">Edit Twin ASR benchmark</h1>
+    </div>
+    <nav class="ev-repos" aria-label="GitHub repositories">
+      <a href="https://github.com/alyssasworld/edit-twin-asr-benchmark" target="_blank" rel="noopener" title="Benchmark code and method on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>Benchmark</span></a>
+      <a href="https://github.com/alyssasworld/edit-twin-mcp" target="_blank" rel="noopener" title="Edit Twin MCP on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>Edit Twin MCP</span></a>
+    </nav>
+    </div>
+    <h2 class="ev-h2 ev-exec">Executive summary</h2>
+    <p class="ev-take" data-variant="switch">Switch edit-twin to <b class="dash-skeleton" data-draw="hl" data-source="headline" data-field="winner_name" data-row="0">—</b>. It clears both guardrails against Whisper, the model in production today, and makes <b class="dash-skeleton" data-draw="hl" data-source="headline" data-field="wer_drop" data-row="0" data-fmt="pct0">—</b> fewer verbatim word errors on my own footage.</p>
+    <p class="ev-take" data-variant="stay" hidden>No challenger cleared both guardrails, so Whisper stays in production.</p>
+    <ul class="ev-legend" aria-label="Models">
+      <li><span class="sw" data-model="parakeet-tdt"></span>Parakeet TDT 0.6B v3 (NVIDIA)</li>
+      <li><span class="sw" data-model="qwen3-asr"></span>Qwen3-ASR 1.7B (Alibaba, + forced aligner)</li>
+      <li><span class="sw" data-model="whisper-turbo"></span>Whisper large-v3-turbo (baseline, in production)</li>
+      <li><span class="sw sw-dash"></span>Whisper's value, the bar to clear</li>
+    </ul>
+  </header>
+
+  <section class="band" id="decision" aria-label="Decision">
+    <div class="card verdict">
+      <p class="v-label">Decision</p>
+      <p class="v-name"><span class="dash-skeleton" data-draw="hl" data-source="headline" data-field="winner_name" data-row="0">—</span></p>
+      <span class="chip chip-ok" data-variant="switch">✓ Ship as the new default</span>
+      <span class="chip chip-mute" data-variant="stay" hidden>Keep Whisper</span>
+      <p class="v-rule">Rule fixed before running anything: a model must be <strong>no worse than Whisper</strong> on filler recall and end-of-word timing. Of those that pass, the <strong>lowest verbatim word error rate</strong> wins; speed breaks near-ties.</p>
+    </div>
+    <div class="tiles" aria-label="Winner versus Whisper">
+      <div class="card tile">
+        <p class="tile-l">Verbatim word error rate</p>
+        <p class="tile-v"><span class="dash-skeleton" data-draw="hl" data-source="headline" data-field="wer" data-row="0" data-fmt="pct1">—</span></p>
+        <p class="tile-d"><span data-draw="delta" data-source="headline" data-field="wer_change" data-row="0" data-fmt="spct" data-better="neg">—</span> vs Whisper's <span data-draw="hl" data-source="headline" data-field="base_wer" data-row="0" data-fmt="pct1">—</span></p>
+      </div>
+      <div class="card tile">
+        <p class="tile-l">Fillers caught (um, uh)</p>
+        <p class="tile-v"><span class="dash-skeleton" data-draw="hl" data-source="headline" data-field="filler" data-row="0" data-fmt="pct0">—</span></p>
+        <p class="tile-d"><span data-draw="delta" data-source="headline" data-field="filler_change" data-row="0" data-fmt="spts" data-better="pos">—</span> vs Whisper's <span data-draw="hl" data-source="headline" data-field="base_filler" data-row="0" data-fmt="pct0">—</span></p>
+      </div>
+      <div class="card tile">
+        <p class="tile-l">Word-end timing error (median)</p>
+        <p class="tile-v"><span class="dash-skeleton" data-draw="hl" data-source="headline" data-field="end_ms" data-row="0" data-fmt="ms">—</span></p>
+        <p class="tile-d"><span data-draw="delta" data-source="headline" data-field="end_change" data-row="0" data-fmt="sms" data-better="neg">—</span> vs Whisper's <span data-draw="hl" data-source="headline" data-field="base_end_ms" data-row="0" data-fmt="ms">—</span></p>
+      </div>
+      <div class="card tile">
+        <p class="tile-l">Speed (× real time)</p>
+        <p class="tile-v"><span class="dash-skeleton" data-draw="hl" data-source="headline" data-field="rtfx" data-row="0" data-fmt="x0">—</span></p>
+        <p class="tile-d"><span data-draw="delta" data-source="headline" data-field="speedup" data-row="0" data-fmt="x1" data-better="gt1">—</span> Whisper's <span data-draw="hl" data-source="headline" data-field="base_rtfx" data-row="0" data-fmt="x0">—</span></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="ev-sec" id="metrics">
+    <h2 class="ev-h2">Metrics</h2>
+    <p class="ev-note">edit-twin cuts video on word timings and needs um/uh written down, which public leaderboards don't measure. So the three deciding metrics are the ones a cut depends on; the rest matter in practice but don't pick the winner.</p>
+    <div class="metric-grid">
+      <div class="card mdef"><span class="mk mk-gate">Decides</span><h3>Verbatim word error rate</h3><p><b>What:</b> mistakes per word against my own hand-checked transcript, with fillers and retakes kept in. Lower is better.</p><p><b>Why:</b> the rough cut removes retakes and fillers, so it needs to see them exactly as said.</p></div>
+      <div class="card mdef"><span class="mk mk-gate">Guardrail</span><h3>Filler recall</h3><p><b>What:</b> share of my real um/uh/hmm the model wrote down. Higher is better.</p><p><b>Why:</b> a filler that isn't transcribed can't be cut, and edit-twin learns my style from them.</p></div>
+      <div class="card mdef"><span class="mk mk-gate">Guardrail</span><h3>Word-end timing error</h3><p><b>What:</b> median gap between where the model says a word ends and where it really ends. Lower is better.</p><p><b>Why:</b> cuts land on word ends; at 30 fps, 50 ms is about 1.5 frames.</p></div>
+      <div class="card mdef"><span class="mk">Also tracked</span><h3>Clean and formatted WER</h3><p><b>Clean:</b> fillers removed, comparable to public leaderboards. <b>Formatted:</b> capitals and punctuation count, which is what subtitles need.</p></div>
+      <div class="card mdef"><span class="mk">Also tracked</span><h3>Invented words</h3><p>Words written per minute over room tone, where the answer should be 0. Catches models that hallucinate over silence.</p></div>
+      <div class="card mdef"><span class="mk">Also tracked</span><h3>Speed and memory</h3><p><b>Speed:</b> how many times faster than real time (load time excluded). <b>Memory:</b> peak RAM and GPU while transcribing on my Mac.</p></div>
+    </div>
+  </section>
+
+  <section class="ev-sec" id="rule">
+  <h2 class="ev-h2">Decision rule results and next steps</h2>
+  <p class="ev-note">How each model scored against the rule set before testing, and what to do with the result.</p>
+  <div class="grid" aria-label="Rule checks and next steps">
+    <div class="card" id="gates">
+      <h3>How each model did against the rule</h3>
+      <p class="sub">Two guardrails against Whisper first, then the lowest verbatim error rate wins.</p>
+      <div class="tbl-wrap">
+        <table data-source="decision" data-row-key="model" aria-label="Decision rule checks per model">
+          <thead><tr>
+            <th data-field="model">Model</th>
+            <th data-field="filler_recall">Fillers ≥ Whisper</th>
+            <th data-field="end_median_ms">Word ends ≤ Whisper</th>
+            <th class="r" data-field="wer_verbatim">Verbatim WER</th>
+            <th data-field="result">Result</th>
+          </tr></thead>
+          <tbody data-draw="gates"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" id="next">
+      <h3>Suggested next steps</h3>
+      <p class="sub">What the numbers say to do now, and what they don't settle yet.</p>
+      <ol class="ev-steps">
+        <li class="ship"><div><span class="step-t">Make <span data-draw="hl" data-source="headline" data-field="winner_name" data-row="0">—</span> the default</span>Swap it in as edit-twin's transcriber, with 30 s audio chunks (see the chunking bug below).</div></li>
+        <li><div><span class="step-t"><span class="step-k">Watch</span>Subtitles</span>With capitals and punctuation counted it scores <b data-draw="hl" data-source="headline" data-field="fmt_wer" data-row="0" data-fmt="pct1">—</b> against Whisper's <b data-draw="hl" data-source="headline" data-field="base_fmt_wer" data-row="0" data-fmt="pct1">—</b>. Keep Whisper for burned-in captions, or add a punctuation pass.</div></li>
+        <li><div><span class="step-t"><span class="step-k">Test</span>Hybrid word timing</span>Only <b data-draw="hl" data-source="headline" data-field="end100" data-row="0" data-fmt="pct0">—</b> of word ends land within 100 ms. <span data-draw="hl" data-source="headline" data-field="best_end_name" data-row="0">—</span> lands at <b data-draw="hl" data-source="headline" data-field="best_end_ms" data-row="0" data-fmt="ms">—</b> median with its forced aligner, so try the winner's words with that aligner's timings.</div></li>
+        <li><div><span class="step-t"><span class="step-k">Confirm</span>Fresh footage</span>The 30 s chunk size was picked after seeing these clips. Re-run on two or three new clips before calling it final.</div></li>
+      </ol>
+    </div>
+  </div>
+  </section>
+
+  <section class="ev-sec" id="tradeoffs">
+    <h2 class="ev-h2">Where each model lands</h2>
+    <p class="ev-note">Up and to the right is better on both charts. The shaded corner is where a model beats Whisper on both axes.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>The guardrails</h3>
+        <p class="sub">Fillers caught against word-end timing error. Only models in the green corner are allowed to compete on accuracy.</p>
+        <div class="chart chart-gate" data-source="summary" data-draw="gatechart"></div>
+      </div>
+      <div class="card">
+        <h3>Accuracy against speed</h3>
+        <p class="sub">Verbatim word error rate against speed. The Y axis is flipped so fewer errors sit higher.</p>
+        <div class="chart chart-speed" data-source="summary" data-draw="speedchart"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="ev-sec" id="scorecard">
+    <h2 class="ev-h2">Every metric against Whisper</h2>
+    <p class="ev-note">Change from Whisper for each challenger. Bars to the right are better, whichever way the metric runs. Gains beyond 100% are labelled as a multiple. Hover a bar for the raw values.</p>
+    <div class="card">
+      <ul class="ev-legend delta-legend" aria-label="Chart key">
+        <li><span class="sw" data-model="parakeet-tdt"></span>Parakeet's change from Whisper</li>
+        <li><span class="sw" data-model="qwen3-asr"></span>Qwen3's change from Whisper</li>
+        <li><span class="sw sw-zero"></span>Zero line = same as Whisper</li>
+      </ul>
+      <div class="chart chart-delta" data-source="vs_baseline" data-draw="deltachart"></div>
+    </div>
+  </section>
+
+  <section class="ev-sec" id="clips">
+    <h2 class="ev-h2">Per clip</h2>
+    <p class="ev-note">Verbatim word error rate on each clip; darker cells have more errors, and a dot marks the best on that clip. Fillers caught are shown under the rate where the clip has any.</p>
+    <div class="card tbl-wrap">
+      <table class="heat" data-source="clips" data-row-key="clip" aria-label="Per-clip results">
+        <thead><tr>
+          <th data-field="clip">Clip</th>
+          <th class="r" data-field="words">Words</th>
+          <th class="r" data-field="fillers">Fillers</th>
+          <th class="r" data-field="whisper"><span class="mname" style="justify-content:flex-end"><span class="sw" data-model="whisper-turbo"></span>Whisper</span></th>
+          <th class="r" data-field="parakeet"><span class="mname" style="justify-content:flex-end"><span class="sw" data-model="parakeet-tdt"></span>Parakeet</span></th>
+          <th class="r" data-field="qwen"><span class="mname" style="justify-content:flex-end"><span class="sw" data-model="qwen3-asr"></span>Qwen3</span></th>
+        </tr></thead>
+        <tbody data-draw="clips"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="ev-sec" id="findings">
+    <h2 class="ev-h2">Findings and gotchas</h2>
+    <p class="ev-note">Three problems that skewed early results, each caught by asking why a number looked off, and how they were fixed. Full write-up in the <a href="https://github.com/alyssasworld/edit-twin-asr-benchmark#readme" target="_blank" rel="noopener">README</a>.</p>
+    <div class="grid">
+      <article class="card ev-find">
+        <span class="tag">Reference timings</span>
+        <h3>The answer key was hiding a problem</h3>
+        <p class="impact"><span>Whisper word-end error</span><span class="big" data-draw="fv" data-source="findings" data-field="value" data-where="key=aligner_end_ms" data-fmt="ms">—</span><span>→</span><span class="big" data-draw="fv" data-source="findings" data-field="value" data-where="key=fitted_end_ms" data-fmt="ms">—</span></p>
+        <p>Word timings were drafted by an aligner, which made words too short. Whisper's word ends are early by about the same amount, so against those labels it looked far better than it is. Fitting the labels to the waveform fixed it.</p>
+        <img src="images/timing-fit-before-after.png" alt="Waveform with word labels: blue strips are the aligner's short labels, orange boxes are the labels fitted to where the sound starts and stops">
+        <p class="cap">Blue: aligner labels. Orange: fitted to the waveform. Checked by eye on this plot.</p>
+      </article>
+      <article class="card ev-find">
+        <span class="tag">Parakeet</span>
+        <h3>A bug in how audio was split, not the model</h3>
+        <p class="impact"><span>Reel error rate, first run</span><span class="big" data-draw="fv" data-source="findings" data-field="value" data-where="key=parakeet_first_wer" data-fmt="pct1">—</span></p>
+        <p>The errors were one solid block of about <b data-draw="fv" data-source="findings" data-field="value" data-where="key=parakeet_missing_words" data-fmt="int">—</b> missing words, not scattered mistakes. Splitting audio into 120 s chunks had silently lost <b data-draw="fv" data-source="findings" data-field="value" data-where="key=parakeet_lost_speech_s" data-fmt="s">—</b> of speech where chunks were joined.</p>
+        <table data-source="parakeet_chunks" data-row-key="chunks" aria-label="Parakeet chunk size comparison">
+          <thead><tr><th data-field="chunks">Chunks</th><th class="r" data-field="reel">Reel</th><th class="r" data-field="vlog3">Vlog 3</th></tr></thead>
+          <tbody data-draw="chunks"></tbody>
+        </table>
+        <p class="cap" style="margin-top:8px">Bold row is the setting used. Picked after seeing these clips, so slightly flattering to Parakeet.</p>
+      </article>
+      <article class="card ev-find">
+        <span class="tag">Qwen3-ASR</span>
+        <h3>Stuck in a loop on silence</h3>
+        <p class="impact"><span>Invented words per minute</span><span class="big" data-draw="fv" data-source="findings" data-field="value" data-where="key=qwen_invented_before_wpm" data-fmt="int">—</span><span>→</span><span class="big" data-draw="hl" data-source="summary" data-field="hallucinated_wpm" data-where="model=qwen3-asr" data-fmt="num1">—</span></p>
+        <p>On <b data-draw="fv" data-source="findings" data-field="value" data-where="key=room_tone_s" data-fmt="s">—</b> of room tone Qwen wrote “oh, oh, oh…” <b data-draw="fv" data-source="findings" data-field="value" data-where="key=qwen_loop_oh" data-fmt="int">—</b> times and took <b data-draw="fv" data-source="findings" data-field="value" data-where="key=qwen_loop_s" data-fmt="s">—</b>.</p>
+        <ol>
+          <li>It writes one token at a time, like a chatbot. With no speech, “oh,” makes another “oh,” the likeliest next token.</li>
+          <li>Whisper's loop check would have deleted real retakes (“So AI just helped”, said three times, scores <span data-draw="fv" data-source="findings" data-field="value" data-where="key=whisper_rep_score" data-fmt="num2">—</span>, over its <span data-draw="fv" data-source="findings" data-field="value" data-where="key=whisper_rep_cutoff" data-fmt="num1">—</span> cut-off).</li>
+          <li>Fix: real speech needs at most <span data-draw="fv" data-source="findings" data-field="value" data-where="key=speech_max_tps" data-fmt="num1">—</span> tokens/s, so each piece gets <span data-draw="fv" data-source="findings" data-field="value" data-where="key=token_cap_tps" data-fmt="int">—</span>/s. Output that uses it all never stopped: a loop, thrown away.</li>
+          <li>Speech results were unchanged by the fix.</li>
+        </ol>
+      </article>
+    </div>
+  </section>
+
+  <section class="ev-sec" id="all">
+    <details class="all card">
+      <summary>All results, every metric</summary>
+      <p class="ev-note" style="margin-top:var(--cds-gap-sm)">Pooled over all clips. Best value per row in bold.</p>
+      <div class="tbl-wrap">
+        <table data-source="all_metrics" data-row-key="metric" aria-label="All metrics per model">
+          <thead><tr>
+            <th data-field="metric">Metric</th>
+            <th class="r" data-field="whisper"><span class="mname" style="justify-content:flex-end"><span class="sw" data-model="whisper-turbo"></span>Whisper</span></th>
+            <th class="r" data-field="parakeet"><span class="mname" style="justify-content:flex-end"><span class="sw" data-model="parakeet-tdt"></span>Parakeet</span></th>
+            <th class="r" data-field="qwen"><span class="mname" style="justify-content:flex-end"><span class="sw" data-model="qwen3-asr"></span>Qwen3</span></th>
+          </tr></thead>
+          <tbody data-draw="all"></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
+  <footer class="ev-foot">
+    <h2 class="ev-h2">Appendix: test setup</h2>
+    <ul class="ev-setup">
+      <li><b>Footage:</b> <span data-draw="hl" data-source="summary" data-field="clips" data-where="model=whisper-turbo" data-fmt="int">—</span> clips (about <span data-draw="fv" data-source="findings" data-field="value" data-where="key=footage_minutes" data-fmt="int">—</span> min) of my own unpublished footage, one speaker.</li>
+      <li><b>Fillers:</b> <span data-draw="hl" data-source="headline" data-field="total_fillers" data-row="0" data-fmt="int">—</span> um/uh/hmm in the reference transcripts, plus <span data-draw="fv" data-source="findings" data-field="value" data-where="key=room_tone_s" data-fmt="s">—</span> of room tone for the invented-words test.</li>
+      <li><b>Word timings:</b> 706 words over 3 clips, made automatically and spot-checked by eye. Timing error is measured on the words each model got right (Whisper <span data-draw="hl" data-source="summary" data-field="timed_words" data-where="model=whisper-turbo" data-fmt="int">—</span>, Parakeet <span data-draw="hl" data-source="summary" data-field="timed_words" data-where="model=parakeet-tdt" data-fmt="int">—</span>, Qwen3 <span data-draw="hl" data-source="summary" data-field="timed_words" data-where="model=qwen3-asr" data-fmt="int">—</span>).</li>
+      <li><b>Runs:</b> each clip run <span data-draw="hl" data-source="summary" data-field="runs_per_clip" data-where="model=whisper-turbo" data-fmt="int">—</span> times back to back after a warm-up; speed is the median.</li>
+      <li><b>Hardware:</b> Apple M4 Pro (24 GB), plugged in.</li>
+      <li><b>Code version:</b> edit-twin commit <span data-draw="hl" data-source="summary" data-field="edit_twin_commit" data-where="model=whisper-turbo">—</span>.</li>
+    </ul>
+  </footer>
+</div>
+
+<script>
+const BASE = 'whisper-turbo';
+const NAMES = { 'whisper-turbo': 'Whisper', 'parakeet-tdt': 'Parakeet', 'qwen3-asr': 'Qwen3' };
+const FULL = { 'whisper-turbo': 'Whisper large-v3-turbo', 'parakeet-tdt': 'Parakeet TDT 0.6B v3', 'qwen3-asr': 'Qwen3-ASR 1.7B' };
+const NOTE = { 'whisper-turbo': 'baseline, in production', 'parakeet-tdt': 'NVIDIA', 'qwen3-asr': 'Alibaba, + forced aligner' };
+const ORDER = ['parakeet-tdt', 'qwen3-asr', 'whisper-turbo'];
+const color = (m) => m === 'parakeet-tdt' ? dash.colors[0] : m === 'qwen3-asr' ? dash.colors[1] : 'var(--cds-chart-muted)';
+
+document.querySelectorAll('.sw[data-model]').forEach((s) => { s.style.background = color(s.dataset.model); });
+
+/* ---------- calculations ---------- */
+dash.calc('headline', {
+  title: 'Decision vs Whisper',
+  description: 'Applies the pre-registered rule (fillers and word ends no worse than Whisper, then lowest verbatim WER) and compares the winner with Whisper.',
+  inputs: ['summary', 'per_clip'],
+  fn: (summary, per_clip) => {
+    const names = { 'whisper-turbo': 'Whisper large-v3-turbo', 'parakeet-tdt': 'Parakeet TDT 0.6B v3', 'qwen3-asr': 'Qwen3-ASR 1.7B' };
+    const rows = summary.map((r) => ({ ...r, wer_verbatim: +r.wer_verbatim, filler_recall: +r.filler_recall, end_median_ms: +r.end_median_ms, rtfx: +r.rtfx, wer_formatted: +r.wer_formatted, end_within_100ms: +r.end_within_100ms }));
+    const base = rows.find((r) => r.model === 'whisper-turbo');
+    if (!base) return [];
+    const pass = rows.filter((r) => r.model !== base.model && r.filler_recall >= base.filler_recall && r.end_median_ms <= base.end_median_ms)
+      .sort((a, b) => a.wer_verbatim - b.wer_verbatim || b.rtfx - a.rtfx);
+    const w = pass[0] || base;
+    const bestEnd = rows.slice().sort((a, b) => a.end_median_ms - b.end_median_ms)[0];
+    const firstClip = per_clip.filter((r) => r.model === per_clip[0].model);
+    return [{
+      winner: w.model, winner_name: names[w.model] || w.model, switch: !!pass[0],
+      wer: w.wer_verbatim, base_wer: base.wer_verbatim,
+      wer_change: (w.wer_verbatim - base.wer_verbatim) / base.wer_verbatim,
+      wer_drop: (base.wer_verbatim - w.wer_verbatim) / base.wer_verbatim,
+      filler: w.filler_recall, base_filler: base.filler_recall, filler_change: w.filler_recall - base.filler_recall,
+      end_ms: w.end_median_ms, base_end_ms: base.end_median_ms, end_change: w.end_median_ms - base.end_median_ms,
+      rtfx: w.rtfx, base_rtfx: base.rtfx, speedup: w.rtfx / base.rtfx,
+      fmt_wer: w.wer_formatted, base_fmt_wer: base.wer_formatted, end100: w.end_within_100ms,
+      best_end_name: names[bestEnd.model] || bestEnd.model, best_end_ms: bestEnd.end_median_ms,
+      total_fillers: firstClip.reduce((s, r) => s + Number(r.fillers_ref), 0),
+      last_run: rows.map((r) => r.run_at).filter(Boolean).sort().pop()
+    }];
+  }
+});
+
+dash.calc('decision', {
+  title: 'Rule checks per model',
+  description: 'Each model against Whisper on the two guardrails, and the result of the rule.',
+  inputs: ['summary'],
+  fn: (summary) => {
+    const base = summary.find((r) => r.model === 'whisper-turbo');
+    if (!base) return [];
+    const rows = summary.map((r) => ({
+      model: r.model, filler_recall: +r.filler_recall, end_median_ms: +r.end_median_ms, wer_verbatim: +r.wer_verbatim,
+      filler_ok: +r.filler_recall >= +base.filler_recall, end_ok: +r.end_median_ms <= +base.end_median_ms
+    }));
+    const pass = rows.filter((r) => r.model !== base.model && r.filler_ok && r.end_ok).sort((a, b) => a.wer_verbatim - b.wer_verbatim);
+    const win = pass[0] ? pass[0].model : base.model;
+    return rows.map((r) => ({ ...r,
+      result: r.model === win ? 'Wins' : r.model === base.model ? 'Baseline' : !r.filler_ok ? 'Out: fewer fillers' : !r.end_ok ? 'Out: later word ends' : 'Passes, higher WER' }));
+  }
+});
+
+dash.calc('vs_baseline', {
+  title: 'Change from Whisper',
+  description: 'Each challenger’s change from Whisper per metric, signed so positive is better.',
+  inputs: ['summary'],
+  fn: (summary) => {
+    const metrics = [
+      ['Decision gates', 'Filler recall', 'filler_recall', 'h'], ['Decision gates', 'Word-end error', 'end_median_ms', 'l'], ['Decision gates', 'Verbatim WER', 'wer_verbatim', 'l'],
+      ['Transcript quality', 'Clean WER', 'wer_clean', 'l'], ['Transcript quality', 'Formatted WER (subtitles)', 'wer_formatted', 'l'], ['Transcript quality', 'Character error rate', 'cer', 'l'],
+      ['Transcript quality', 'Filler precision', 'filler_precision', 'h'], ['Transcript quality', 'Invented words on room tone', 'hallucinated_wpm', 'l'],
+      ['Timing', 'Word-start error', 'start_median_ms', 'l'], ['Timing', 'Word ends within 100 ms', 'end_within_100ms', 'h'], ['Timing', 'Word ends within 50 ms', 'end_within_50ms', 'h'],
+      ['Running cost', 'Speed', 'rtfx', 'h'], ['Running cost', 'Load time', 'first_run_s', 'l'], ['Running cost', 'Peak RAM', 'peak_rss_gb', 'l'], ['Running cost', 'Peak GPU memory', 'peak_gpu_gb', 'l']
+    ];
+    const base = summary.find((r) => r.model === 'whisper-turbo');
+    if (!base) return [];
+    const out = [];
+    for (const r of summary) {
+      if (r.model === base.model) continue;
+      for (const [group, metric, field, dir] of metrics) {
+        const v = +r[field], b = +base[field];
+        const change = b === 0 ? (v === 0 ? 0 : (dir === 'l' ? -1 : 1)) : (dir === 'l' ? (b - v) / b : (v - b) / b);
+        const ratio = dir === 'l' ? (v === 0 ? null : b / v) : (b === 0 ? null : v / b);
+        out.push({ group, metric, field, dir, model: r.model, value: v, base: b, change, ratio });
+      }
+    }
+    return out;
+  }
+});
+
+dash.calc('clips', {
+  title: 'Per-clip error rates',
+  description: 'Verbatim WER and fillers caught per clip, one column per model.',
+  inputs: ['per_clip'],
+  fn: (per_clip) => {
+    const col = { 'whisper-turbo': 'whisper', 'parakeet-tdt': 'parakeet', 'qwen3-asr': 'qwen' };
+    const by = {};
+    for (const r of per_clip) {
+      const c = by[r.clip] || (by[r.clip] = { clip: r.clip, words: +r.ref_words, fillers: +r.fillers_ref });
+      const k = col[r.model]; if (!k) continue;
+      c[k] = +r.wer_verbatim; c[k + '_caught'] = +r.fillers_caught;
+    }
+    return Object.values(by).sort((a, b) => b.words - a.words);
+  }
+});
+
+dash.calc('all_metrics', {
+  title: 'All metrics',
+  description: 'Every pooled metric per model.',
+  inputs: ['summary'],
+  fn: (summary) => {
+    const rows = [
+      ['Verbatim WER', 'wer_verbatim', 'l'], ['Clean WER', 'wer_clean', 'l'], ['Formatted WER', 'wer_formatted', 'l'], ['Character error rate', 'cer', 'l'],
+      ['Filler recall', 'filler_recall', 'h'], ['Filler precision', 'filler_precision', 'h'], ['Start error (median)', 'start_median_ms', 'l'], ['End error (median)', 'end_median_ms', 'l'],
+      ['Starts within 50 ms', 'start_within_50ms', 'h'], ['Ends within 50 ms', 'end_within_50ms', 'h'], ['Ends within 100 ms', 'end_within_100ms', 'h'], ['Timed words', 'timed_words', ''],
+      ['Invented words on room tone', 'hallucinated_wpm', 'l'], ['Speed (RTFx)', 'rtfx', 'h'], ['Load time (first run)', 'first_run_s', 'l'], ['Peak RAM', 'peak_rss_gb', 'l'], ['Peak GPU memory', 'peak_gpu_gb', 'l']
+    ];
+    const get = (m, f) => { const r = summary.find((x) => x.model === m); return r ? +r[f] : null; };
+    return rows.map(([metric, field, dir]) => ({ metric, field, dir, whisper: get('whisper-turbo', field), parakeet: get('parakeet-tdt', field), qwen: get('qwen3-asr', field) }));
+  }
+});
+
+/* ---------- formatting & helpers ---------- */
+const F = {
+  txt: (v) => String(v), int: d3.format(','), num1: d3.format('.1f'), num2: d3.format('.2f'),
+  pct0: d3.format('.0%'), pct1: d3.format('.1%'), ms: (v) => Math.round(v) + ' ms', s: (v) => Math.round(v) + ' s',
+  x0: (v) => Math.round(v) + '×', x1: (v) => d3.format('.1f')(v) + '×', gb: (v) => d3.format('.1f')(v) + ' GB',
+  spct: d3.format('+.0%'), spts: (v) => d3.format('+.0f')(v * 100) + ' pts', sms: (v) => d3.format('+.0f')(v) + ' ms',
+  datelong: (v) => d3.utcFormat('%-d %B %Y')(new Date(String(v).slice(0, 10))),
+  date: (v) => d3.utcFormat('%-d %b %Y')(new Date(String(v).slice(0, 10)))
+};
+const metricFmt = (field) => /wer|cer/.test(field) ? F.pct1 : /recall|precision|within/.test(field) ? F.pct0 : /_ms$/.test(field) ? F.ms
+  : field === 'rtfx' ? F.x0 : /_gb$/.test(field) ? F.gb : field === 'first_run_s' ? (v) => d3.format('.1f')(v) + ' s'
+  : field === 'hallucinated_wpm' ? (v) => (v === 0 ? '0' : d3.format('.1f')(v)) + ' / min' : F.int;
+
+function rowsOf(id) { const d = dash.data(id); return d.status === 'ok' ? (Array.isArray(d.data) ? d.data : []) : null; }
+function pickRow(el, rows) {
+  if (el.dataset.row != null) return rows[+el.dataset.row];
+  const where = new URLSearchParams(el.dataset.where || '');
+  return rows.find((r) => [...where].every(([k, v]) => String(r[k]) === v));
+}
+function failed(el, id) { const s = dash.data(id).status; return s === 'error' || s === 'connect' || s === 'declined'; }
+function failLine(el) { el.replaceChildren(); const d = document.createElement('div'); d.className = 'fail-line'; d.textContent = 'Failed to load'; el.append(d); }
+
+function valueDraw(el) {
+  const rows = rowsOf(el.dataset.source);
+  const r = rows && pickRow(el, rows);
+  if (!r || r[el.dataset.field] == null) { el.textContent = '—'; if (rows || failed(el, el.dataset.source)) el.classList.remove('dash-skeleton'); return null; }
+  el.classList.remove('dash-skeleton');
+  const v = r[el.dataset.field];
+  el.textContent = (F[el.dataset.fmt] || F.txt)(v);
+  return v;
+}
+dash.draw('hl', valueDraw);
+dash.draw('fv', valueDraw);
+dash.draw('delta', (el) => {
+  const v = valueDraw(el);
+  el.classList.remove('up', 'down');
+  if (v == null) return;
+  const b = el.dataset.better;
+  const good = b === 'neg' ? v <= 0 : b === 'gt1' ? v >= 1 : v >= 0;
+  el.classList.add(good ? 'up' : 'down');
+  if (b === 'gt1') el.textContent = F.x1(v) + (v >= 1 ? ' faster than' : ' the speed of');
+});
+
+dash.onData(() => {
+  const h = rowsOf('headline');
+  const sw = h && h[0] ? !!h[0].switch : true;
+  document.querySelectorAll('[data-variant]').forEach((e) => { e.hidden = e.dataset.variant !== (sw ? 'switch' : 'stay'); });
+  document.querySelectorAll('.verdict').forEach((e) => e.classList.toggle('is-stay', !sw));
+});
+
+/* ---------- tables ---------- */
+function td(text, cls) { const c = document.createElement('td'); if (cls) c.className = cls; if (text != null) c.textContent = text; return c; }
+function modelCell(m) {
+  const c = td(null); const n = document.createElement('span'); n.className = 'mname';
+  const s = document.createElement('span'); s.className = 'sw'; s.style.background = color(m);
+  const t = document.createElement('span'); t.textContent = FULL[m] || m;
+  const note = document.createElement('span'); note.className = 'mnote'; note.textContent = NOTE[m] || ''; t.append(note);
+  n.append(s, t); c.append(n); return c;
+}
+
+dash.draw('gates', (tb) => {
+  const rows = rowsOf('decision');
+  tb.replaceChildren();
+  if (!rows) return;
+  const sorted = rows.slice().sort((a, b) => ORDER.indexOf(a.model) - ORDER.indexOf(b.model));
+  for (const r of sorted) {
+    const tr = document.createElement('tr'); tr.dataset.key = r.model;
+    if (r.result === 'Wins') tr.className = 'is-win';
+    const isBase = r.model === BASE;
+    const gate = (ok, txt) => { const c = td(null); const g = document.createElement('span'); g.className = 'gate ' + (isBase ? 'base' : ok ? 'ok' : 'bad');
+      const i = document.createElement('i'); i.textContent = isBase ? '—' : ok ? '✓' : '✗'; g.append(i, document.createTextNode(txt)); c.append(g); return c; };
+    const res = td(null); const chip = document.createElement('span');
+    chip.className = 'chip ' + (r.result === 'Wins' ? 'chip-ok' : r.result.startsWith('Out') ? 'chip-bad' : 'chip-mute'); chip.textContent = r.result; res.append(chip);
+    tr.append(modelCell(r.model), gate(r.filler_ok, F.pct0(r.filler_recall)), gate(r.end_ok, F.ms(r.end_median_ms)), td(F.pct1(r.wer_verbatim), 'r'), res);
+    tb.append(tr);
+  }
+});
+
+dash.draw('clips', (tb) => {
+  const rows = rowsOf('clips');
+  tb.replaceChildren();
+  if (!rows) return;
+  const keys = ['whisper', 'parakeet', 'qwen'];
+  const max = d3.max(rows, (r) => d3.max(keys, (k) => r[k])) || 1;
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    const best = d3.min(keys, (k) => r[k]);
+    tr.append(td(r.clip), td(F.int(r.words), 'r'), td(F.int(r.fillers), 'r'));
+    for (const k of keys) {
+      const c = td(null, 'h' + (r[k] === best ? ' best' : ''));
+      if (r[k] != null) {
+        c.style.background = `color-mix(in srgb, var(--cds-chart-status-critical) ${Math.round(r[k] / max * 38)}%, transparent)`;
+        const v = document.createElement('span'); v.className = 'v'; v.textContent = F.pct1(r[k]); c.append(v);
+        if (r.fillers) { const f = document.createElement('span'); f.className = 'f'; f.textContent = `${r[k + '_caught']}/${r.fillers} fillers`; c.append(f); }
+      }
+      tr.append(c);
+    }
+    tb.append(tr);
+  }
+});
+
+dash.draw('chunks', (tb) => {
+  const rows = rowsOf('parakeet_chunks');
+  tb.replaceChildren();
+  if (!rows) return;
+  for (const r of rows) {
+    const tr = document.createElement('tr'); if (r.used === true || r.used === 'true') tr.className = 'used';
+    tr.append(td(r.chunks), td(F.pct1(+r.reel), 'r'), td(F.pct1(+r.vlog3), 'r'));
+    tb.append(tr);
+  }
+});
+
+dash.draw('all', (tb) => {
+  const rows = rowsOf('all_metrics');
+  tb.replaceChildren();
+  if (!rows) return;
+  for (const r of rows) {
+    const tr = document.createElement('tr'); tr.append(td(r.metric));
+    const vals = [r.whisper, r.parakeet, r.qwen].filter((v) => v != null);
+    const best = r.dir === 'l' ? d3.min(vals) : r.dir === 'h' ? d3.max(vals) : null;
+    const fmt = metricFmt(r.field);
+    for (const v of [r.whisper, r.parakeet, r.qwen]) {
+      const c = td(null, 'r');
+      if (v == null) c.textContent = '—';
+      else { const e = document.createElement(v === best ? 'b' : 'span'); e.textContent = fmt(v); c.append(e); }
+      tr.append(c);
+    }
+    tb.append(tr);
+  }
+});
+
+/* ---------- charts ---------- */
+function tipFor(box) {
+  const t = document.createElement('div'); t.className = 'tip'; t.setAttribute('role', 'status'); box.append(t);
+  return {
+    show(ev, title, lines) {
+      t.replaceChildren();
+      const h = document.createElement('div'); h.className = 'tt'; h.textContent = title; t.append(h);
+      for (const [c, name, val] of lines) {
+        const r = document.createElement('div'); r.className = 'tr';
+        if (c) { const s = document.createElement('span'); s.className = 'sw'; s.style.background = c; r.append(s); }
+        const n = document.createElement('span'); n.textContent = name; const b = document.createElement('b'); b.textContent = val;
+        r.append(n, b); t.append(r);
+      }
+      const bb = box.getBoundingClientRect();
+      const x = (ev.clientX ?? bb.left + bb.width / 2) - bb.left, y = (ev.clientY ?? bb.top) - bb.top;
+      t.style.opacity = 1;
+      const w = t.offsetWidth, hgt = t.offsetHeight;
+      t.style.left = Math.max(0, Math.min(x + 12, bb.width - w)) + 'px';
+      t.style.top = Math.max(0, y - hgt - 10 < 0 ? y + 14 : y - hgt - 10) + 'px';
+    },
+    hide() { t.style.opacity = 0; }
+  };
+}
+const drawnOnce = {};
+function anim(name) { const first = !drawnOnce[name]; drawnOnce[name] = true; return first; }
+
+function scatter(el, cfg) {
+  const rows = rowsOf('summary');
+  el.replaceChildren();
+  if (!rows) { if (failed(el, 'summary')) failLine(el); return; }
+  const data = rows.map((r) => ({ model: r.model, x: +r[cfg.x], y: +r[cfg.y], wer: +r.wer_verbatim }));
+  const base = data.find((d) => d.model === BASE);
+  const W = Math.max(280, el.clientWidth), H = 300;
+  const svg = d3.select(el).append('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img').attr('aria-label', cfg.aria);
+  const yTicks = cfg.yScale.ticks(5);
+  const probe = svg.append('text').attr('class', 'lbl-muted').text(d3.max(yTicks.map(cfg.yFmt), (s) => s) || '');
+  const yw = d3.max(yTicks, (t) => { probe.text(cfg.yFmt(t)); return probe.node().getComputedTextLength(); }) || 30;
+  probe.remove();
+  const m = { t: 14, r: 16, b: 46, l: yw + 30 };
+  const x = cfg.xScale.range([m.l, W - m.r]), y = cfg.yScale.range([H - m.b, m.t]);
+  // better-than-baseline zone
+  if (base) {
+    const [x0, x1] = [x(base.x), cfg.xBetter > 0 ? W - m.r : m.l].sort((a, b) => a - b);
+    const [y0, y1] = [y(base.y), m.t].sort((a, b) => a - b);
+    svg.append('rect').attr('x', x0).attr('y', y0).attr('width', x1 - x0).attr('height', y1 - y0).style('fill', 'color-mix(in srgb, var(--color-ok) 9%, transparent)');
+    svg.append('text').attr('class', 'zone-lbl').attr('x', x1 - 6).attr('y', y0 + 14).attr('text-anchor', 'end').text(cfg.zone);
+  }
+  const gx = svg.append('g').attr('transform', `translate(0,${H - m.b})`).call(d3.axisBottom(x).ticks(Math.max(3, Math.floor(W / 90))).tickFormat(cfg.xFmt).tickSizeOuter(0)).attr('font-size', null).attr('font-family', null);
+  gx.select('.domain').style('stroke', 'var(--cds-chart-axis)'); gx.selectAll('.tick line').style('stroke', 'var(--cds-chart-axis)');
+  const gy = svg.append('g').attr('transform', `translate(${m.l},0)`).call(d3.axisLeft(y).ticks(5).tickFormat(cfg.yFmt).tickSize(-(W - m.l - m.r))).attr('font-size', null).attr('font-family', null);
+  gy.select('.domain').remove(); gy.selectAll('.tick line').style('stroke', 'var(--cds-chart-grid)');
+  svg.append('text').attr('class', 'ax-title').attr('x', (m.l + W - m.r) / 2).attr('y', H - 6).attr('text-anchor', 'middle').text(cfg.xLabel);
+  svg.append('text').attr('class', 'ax-title').attr('transform', `translate(11,${(m.t + H - m.b) / 2}) rotate(-90)`).attr('text-anchor', 'middle').text(cfg.yLabel);
+  if (base) {
+    svg.append('line').attr('x1', x(base.x)).attr('x2', x(base.x)).attr('y1', m.t).attr('y2', H - m.b).style('stroke', 'var(--cds-chart-reference)').attr('stroke-dasharray', '4 3');
+    svg.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(base.y)).attr('y2', y(base.y)).style('stroke', 'var(--cds-chart-reference)').attr('stroke-dasharray', '4 3');
+  }
+  const tip = tipFor(el);
+  const first = anim(cfg.name);
+  const g = svg.append('g');
+  const placed = [];
+  for (const d of data.slice().sort((a, b) => (b.model === cfg.winner) - (a.model === cfg.winner))) {
+    const px = x(d.x), py = y(d.y);
+    const isWin = cfg.winner === d.model;
+    const node = g.append('g').attr('tabindex', 0).attr('aria-label', `${FULL[d.model]}: ${cfg.xFmtFull(d.x)}, ${cfg.yFmtFull(d.y)}`).style('cursor', 'default');
+    if (isWin) node.append('circle').attr('cx', px).attr('cy', py).attr('r', 13).style('fill', 'none').style('stroke', color(d.model)).style('stroke-opacity', .35).attr('stroke-width', 2);
+    node.append('circle').attr('class', first ? 'pop' : null).attr('cx', px).attr('cy', py).attr('r', 7).style('fill', color(d.model)).style('stroke', 'var(--color-panel)').attr('stroke-width', 2);
+    const lab = node.append('g');
+    const place = (right, dy) => {
+      lab.node().replaceChildren();
+      lab.append('text').attr('class', 'lbl').attr('x', px + (right ? 14 : -14)).attr('y', py - 2 + dy).attr('text-anchor', right ? 'start' : 'end').text(NAMES[d.model]);
+      lab.append('text').attr('class', 'lbl-sub').attr('x', px + (right ? 14 : -14)).attr('y', py + 12 + dy).attr('text-anchor', right ? 'start' : 'end').text(cfg.pointNote(d));
+      return lab.node().getBBox();
+    };
+    const hits = (b) => placed.some((p) => b.x < p.x + p.width + 4 && p.x < b.x + b.width + 4 && b.y < p.y + p.height + 2 && p.y < b.y + b.height + 2)
+      || b.x < m.l || b.x + b.width > W;
+    let box = null;
+    for (const [right, dy] of [[true, 0], [false, 0], [true, 18], [false, 18], [true, -18], [false, -18]]) { box = place(right, dy); if (!hits(box)) break; }
+    placed.push(box);
+    const on = (ev) => tip.show(ev, FULL[d.model], [[color(d.model), cfg.yName, cfg.yFmtFull(d.y)], [null, cfg.xName, cfg.xFmtFull(d.x)]]);
+    node.on('pointermove', on).on('focus', on).on('pointerleave', tip.hide).on('blur', tip.hide);
+  }
+}
+
+function winnerModel() { const h = rowsOf('headline'); return h && h[0] ? h[0].winner : null; }
+
+dash.draw('gatechart', (el) => {
+  const rows = rowsOf('summary') || [];
+  const xmax = (d3.max(rows, (r) => +r.end_median_ms) || 150) * 1.25;
+  scatter(el, {
+    name: 'gate', x: 'end_median_ms', y: 'filler_recall', aria: 'Filler recall against word-end timing error per model',
+    xScale: d3.scaleLinear([xmax, 0], [0, 1]), yScale: d3.scaleLinear([0, 1], [0, 1]), xBetter: 1,
+    xFmt: (v) => v + ' ms', yFmt: d3.format('.0%'), xFmtFull: F.ms, yFmtFull: F.pct0,
+    xLabel: 'Word-end timing error, ms (tighter →)', yLabel: 'Fillers caught (more ↑)', xName: 'Word-end error', yName: 'Fillers caught',
+    zone: 'Passes both guardrails', winner: winnerModel(), pointNote: (d) => `${F.pct0(d.y)} · ${F.ms(d.x)}`
+  });
+});
+
+dash.draw('speedchart', (el) => {
+  const rows = rowsOf('summary') || [];
+  const xmax = (d3.max(rows, (r) => +r.rtfx) || 100) * 1.2;
+  const ymax = (d3.max(rows, (r) => +r.wer_verbatim) || .1) * 1.3;
+  scatter(el, {
+    name: 'speed', x: 'rtfx', y: 'wer_verbatim', aria: 'Verbatim word error rate against speed per model',
+    xScale: d3.scaleLinear([0, xmax], [0, 1]), yScale: d3.scaleLinear([ymax, 0], [0, 1]), xBetter: 1,
+    xFmt: (v) => v + '×', yFmt: d3.format('.0%'), xFmtFull: (v) => F.x0(v) + ' real time', yFmtFull: F.pct1,
+    xLabel: 'Speed, × real time (faster →)', yLabel: 'Verbatim WER (fewer errors ↑)', xName: 'Speed', yName: 'Verbatim WER',
+    zone: 'More accurate and faster', winner: winnerModel(), pointNote: (d) => `${F.pct1(d.y)} WER · ${F.x0(d.x)}`
+  });
+});
+
+dash.draw('deltachart', (el) => {
+  const rows = rowsOf('vs_baseline');
+  el.replaceChildren();
+  if (!rows) { if (failed(el, 'vs_baseline')) failLine(el); return; }
+  const models = ORDER.filter((m) => rows.some((r) => r.model === m));
+  const metrics = []; const seen = new Set();
+  for (const r of rows) if (!seen.has(r.field)) { seen.add(r.field); metrics.push({ group: r.group, metric: r.metric, field: r.field }); }
+  const W = Math.max(300, el.clientWidth);
+  const barH = 13, rowH = barH * models.length + 12, grpH = 28;
+  const svg = d3.select(el).append('svg').attr('width', '100%').attr('role', 'img').attr('aria-label', 'Change from Whisper per metric for each challenger');
+  const probe = svg.append('text').attr('class', 'lbl-muted');
+  const lw = Math.min(W * .42, d3.max(metrics, (m) => { probe.text(m.metric); return probe.node().getComputedTextLength(); }) + 12);
+  probe.remove();
+  const pad = 48;
+  const x = d3.scaleLinear([-1, 1], [lw + pad, W - pad]);
+  let yPos = 22; const layout = []; let lastG = null;
+  for (const m of metrics) {
+    if (m.group !== lastG) { if (lastG) yPos += 10; layout.push({ type: 'g', label: m.group, y: yPos }); yPos += grpH - 6; lastG = m.group; }
+    layout.push({ type: 'm', ...m, y: yPos }); yPos += rowH;
+  }
+  const H = yPos + 8;
+  svg.attr('viewBox', `0 0 ${W} ${H}`);
+  el.style.minHeight = H + 'px';
+  // axis ticks on top
+  for (const t of [-1, -.5, 0, .5, 1]) {
+    svg.append('line').attr('x1', x(t)).attr('x2', x(t)).attr('y1', 16).attr('y2', H).style('stroke', t === 0 ? 'var(--cds-chart-axis)' : 'var(--cds-chart-grid)');
+    svg.append('text').attr('class', 'lbl-muted').attr('x', x(t)).attr('y', 10).attr('text-anchor', 'middle').text(t === 0 ? 'Whisper' : d3.format('+.0%')(t));
+  }
+  svg.append('text').attr('class', 'lbl-muted').attr('x', x(-1)).attr('y', H - 2).attr('text-anchor', 'start').text('← worse');
+  svg.append('text').attr('class', 'lbl-muted').attr('x', x(1)).attr('y', H - 2).attr('text-anchor', 'end').text('better →');
+  const tip = tipFor(el);
+  const first = anim('delta');
+  for (const L of layout) {
+    if (L.type === 'g') { svg.append('text').attr('class', 'grp-lbl').attr('x', 0).attr('y', L.y + 14).text(L.label); continue; }
+    svg.append('text').attr('class', 'lbl-muted').attr('x', 0).attr('y', L.y + rowH / 2).attr('dominant-baseline', 'middle').text(L.metric);
+    models.forEach((mod, i) => {
+      const r = rows.find((q) => q.field === L.field && q.model === mod); if (!r) return;
+      const c = Math.max(-1, Math.min(1, r.change));
+      const y0 = L.y + 4 + i * barH, x0 = x(0), x1 = x(c);
+      const g = svg.append('g').attr('tabindex', 0).attr('aria-label', `${NAMES[mod]} ${L.metric}: ${metricFmt(L.field)(r.value)} vs Whisper ${metricFmt(L.field)(r.base)}`);
+      g.append('rect').attr('class', first ? 'grow' : null).style('--ox', c >= 0 ? '0%' : '100%')
+        .attr('x', Math.min(x0, x1)).attr('y', y0).attr('width', Math.max(1.5, Math.abs(x1 - x0))).attr('height', barH - 2).attr('rx', 2).style('fill', color(mod));
+      const label = r.change > 1 && r.ratio ? F.x1(r.ratio) : r.change === 1 && r.value === 0 ? metricFmt(L.field)(0) : d3.format('+.0%')(r.change);
+      g.append('text').attr('class', 'lbl-muted').style('font-size', '10px').attr('x', c >= 0 ? x1 + 4 : x1 - 4).attr('y', y0 + barH / 2).attr('dominant-baseline', 'middle').attr('text-anchor', c >= 0 ? 'start' : 'end').text(label);
+      const on = (ev) => tip.show(ev, L.metric, [[color(mod), NAMES[mod], metricFmt(L.field)(r.value)], ['var(--cds-chart-muted)', 'Whisper', metricFmt(L.field)(r.base)]]);
+      g.on('pointermove', on).on('focus', on).on('pointerleave', tip.hide).on('blur', tip.hide);
+    });
+  }
+});
+</script>
+
+<script>
+// Fixed figures from the debugging write-ups (not in results.json).
+__loadDashboard({
+  findings: [{"key": "aligner_end_ms", "value": 46, "label": "Whisper end error vs aligner-drafted labels (ms)"}, {"key": "fitted_end_ms", "value": 120, "label": "Whisper end error vs waveform-fitted labels (ms)"}, {"key": "parakeet_first_wer", "value": 0.161, "label": "Parakeet error on the reel, first run (120 s chunks)"}, {"key": "parakeet_missing_words", "value": 45, "label": "Words missing in one block on that run"}, {"key": "parakeet_lost_speech_s", "value": 22, "label": "Seconds of speech lost at chunk joins"}, {"key": "room_tone_s", "value": 53, "label": "Seconds of room tone tested"}, {"key": "qwen_loop_oh", "value": 4094, "label": "Times Qwen wrote 'oh,' on room tone"}, {"key": "qwen_loop_s", "value": 161, "label": "Seconds Qwen took on that room tone"}, {"key": "whisper_rep_score", "value": 2.78, "label": "Whisper loop-check score of a real retake"}, {"key": "whisper_rep_cutoff", "value": 2.4, "label": "Whisper loop-check cut-off"}, {"key": "speech_max_tps", "value": 3.9, "label": "Fastest real speech, tokens per second"}, {"key": "token_cap_tps", "value": 10, "label": "Token budget given per second of audio"}, {"key": "qwen_invented_before_wpm", "value": 4637, "label": "Qwen invented words per minute before the loop fix"}, {"key": "footage_minutes", "value": 11, "label": "Minutes of footage across the clips"}],
+  parakeet_chunks: [{"chunks": "Whole file", "reel": 0.129, "vlog3": 0.059, "used": false}, {"chunks": "30 s", "reel": 0.059, "vlog3": 0.017, "used": true}, {"chunks": "60 s", "reel": 0.091, "vlog3": 0.019, "used": false}, {"chunks": "120 s", "reel": 0.161, "vlog3": 0.019, "used": false}]
+});
+</script>
+</div>
+</body>
+</html>

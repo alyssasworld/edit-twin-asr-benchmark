@@ -1,0 +1,47 @@
+# Publish the results dashboard (docs/index.html) to GitHub Pages.
+#
+# Runs when new results, the page or its build script are pushed to main.
+# The benchmark itself is NOT run here: it needs my private audio and an Apple Silicon
+# Mac (MLX). I run and score locally, push results/metrics/, and this publishes them.
+name: Publish dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "results/metrics/**"
+      - "docs/**"
+      - "tools/build_dashboard.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch: 
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:  # one deploy at a time; a newer push replaces a waiting one
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # only pandas is needed: the full project can't install here, because
+      # edit-twin-mcp is a local folder next to this repo on my Mac
+      - run: pip install pandas
+      - run: python tools/build_dashboard.py  # results/metrics/*.csv -> docs/results.json
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deploy
+        uses: actions/deploy-pages@v4
