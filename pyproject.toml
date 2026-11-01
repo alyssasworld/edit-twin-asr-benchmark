@@ -13,6 +13,9 @@ dependencies = [
 ]
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# slow tests run a real model; skipped unless asked for with: uv run pytest -m slow
+markers = ["slow: runs a real speech model (needs audio and model download)"]
+addopts = "-m 'not slow'"
 
 [tool.uv.sources]
 edit-twin-mcp = { path = "../edit-twin-mcp", editable = true }
