@@ -475,8 +475,9 @@ requires-dist = [
     { name = "faster-whisper", marker = "(platform_machine != 'arm64' and extra == 'transcribe') or (sys_platform != 'darwin' and extra == 'transcribe')" },
     { name = "mcp", specifier = ">=2.0,<3" },
     { name = "mlx-whisper", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'transcribe'" },
+    { name = "parakeet-mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'parakeet'", specifier = ">=0.5.3" },
 ]
-provides-extras = ["transcribe"]
+provides-extras = ["transcribe", "parakeet"]
 
 [[package]]
 name = "filelock"
